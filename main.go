@@ -93,9 +93,7 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 		}
 		log.Printf("matched app id: %v", app.FusionAuthAppID)
-		c.JSON(200, gin.H{
-			"message": "pong",
-		})
+		c.JSON(200, gin.H{"message": "pong"})
 	})
 	r.GET("/pages/makepayment", func(c *gin.Context) {
 		htmlstr, err := htmltemplates.GetPaymentTemplate()
@@ -104,7 +102,6 @@ func main() {
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
-
 		c.Data(200, "text/html", []byte(htmlstr))
 	})
 	r.GET("/auth/login", func(c *gin.Context) {
@@ -112,10 +109,7 @@ func main() {
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 		}
-		c.Redirect(
-			301,
-			app.AuthCodeURL,
-		)
+		c.Redirect(301, app.AuthCodeURL)
 	})
 	r.GET("/api/currentuser/email", func(c *gin.Context) {
 		app, ok := conf.GetConfigForDomain(c.Request.Host)
@@ -130,6 +124,9 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 		}
 		routes.LoggedIn(c, app, app.FusionAuthClient)
+	})
+	r.POST("/api/mutate", func(c *gin.Context) {
+		routes.PostMutation(c, conf)
 	})
 	r.GET("/auth/oauth-cb", func(c *gin.Context) {
 		app, ok := conf.GetConfigForDomain(c.Request.Host)

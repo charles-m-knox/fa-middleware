@@ -14,6 +14,7 @@ This repository contains the building blocks for a FusionAuth-based middleware l
   - [Needed features](#needed-features)
   - [Schema discussion](#schema-discussion)
     - [Table definition](#table-definition)
+  - [TODO](#todo)
 
 ## Getting started
 
@@ -46,6 +47,17 @@ These are the basic steps to get this middleware up and running. Up next is to g
 * https://fusionauth.io/docs/v1/tech/example-apps/go/
 * https://fusionauth.io/blog/2020/06/17/building-cli-app-with-device-grant-and-golang/
 * https://fusionauth.io/docs/v1/tech/core-concepts/integration-points/ - **important** - showcases the pages that you don't have to deal with 😉
+
+Useful examples for `gin-gonic`:
+
+* https://gin-gonic.com/docs/examples/bind-query-or-post/
+* https://gin-gonic.com/docs/examples/support-lets-encrypt/
+* https://gin-gonic.com/docs/examples/goroutines-inside-a-middleware/
+
+Useful content for Postgres:
+
+* https://www.postgresqltutorial.com/postgresql-date/
+* https://www.prisma.io/dataguide/postgresql/inserting-and-modifying-data/insert-on-conflict
 
 ## Fusion Auth
 
@@ -94,6 +106,10 @@ It might be smartest to store all three of these for the sake of ensuring that t
 
 This is an initial draft of a possible database schema:
 
-| `id`                                   | `tenant_id`                            | `app_id`                               | `stripe_cust_id`     | `field`    | `value` | `updated_at` |
+| `id`                                   | `app_id`                               | `tenant_id`                            | `stripe_cust_id`     | `field`    | `value` | `updated_at` |
 | -------------------------------------- | -------------------------------------- | -------------------------------------- | -------------------- | ---------- | ------- | ------------ |
-| `370df073-c2e3-41f9-a64f-32866a48b972` | `cbb8cd3a-aed7-413c-a65f-40acf4034fc3` | `6e4b577c-6752-46db-9c42-3bd86858c59d` | `cus_J6Tc1xnIxNW5BG` | `settings` | `"{}"`  | `<date>`     |
+| `370df073-c2e3-41f9-a64f-32866a48b972` | `6e4b577c-6752-46db-9c42-3bd86858c59d` | `cbb8cd3a-aed7-413c-a65f-40acf4034fc3` | `cus_J6Tc1xnIxNW5BG` | `settings` | `"{}"`  | `<date>`     |
+
+## TODO
+
+* Add a secret key to better secure other microservices' access to the mutation and user data endpoints

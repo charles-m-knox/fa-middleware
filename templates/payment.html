@@ -17,10 +17,65 @@
         crossorigin="anonymous"></script>
     <script>
         // var stripe = Stripe('');
+        $(document).ready(function () {
+            $.get("/api/currentuser/email", function (data) {
+                $("#user-email").html(data);
+                alert(data);
+            });
 
-        $.get("/api/currentuser/email", function (data) {
-            $("#user-email").html(data);
-            alert(data);
+            $("#set-data-btn").click(function () {
+                $.ajax({
+                    url: "/api/mutate",
+                    type: "POST",
+                    data: JSON.stringify({
+                        "f": "testfield",
+                        "v": `${new Date().toUTCString()}`,
+                        "m": "s"
+                    }),
+                    contentType: "application/json; charset=utf-8",
+                    dataType: "json",
+                    success: function (data) {
+                        alert(data);
+                    }
+                });
+                // $.post("/api/mutate",
+                //     {
+                //         "f": "testfield",
+                //         "v": `${new Date().toUTCString()}`,
+                //         "m": "s"
+                //     },
+                //     function (data) {
+                //         alert(data);
+                //     },
+                //     "application/json"
+                // );
+            });
+
+            $("#get-data-btn").click(function () {
+                $.ajax({
+                    url: "/api/mutate",
+                    type: "POST",
+                    data: JSON.stringify({
+                        "f": "testfield",
+                        "m": "g"
+                    }),
+                    contentType: "application/json; charset=utf-8",
+                    dataType: "json",
+                    success: function (data) {
+                        alert(data);
+                    }
+                });
+                // $.post("/api/mutate",
+                //     {
+                //         "f": "testfield",
+                //         "m": "g"
+                //     },
+                //     function (data) {
+                //         alert(data);
+                //     },
+                //     "application/json"
+                // );
+            });
         });
     </script>
     <div class="container">
@@ -31,6 +86,10 @@
                 </p>
                 <p>
                     Using your JWT, your email address is: <span id="user-email">...</span>
+                </p>
+                <p>
+                    <button id="set-data-btn" class="btn btn-primary mr-3">Set some data</button>
+                    <button id="get-data-btn" class="btn btn-primary mr-3">Get the data that was just set</button>
                 </p>
             </div>
         </div>

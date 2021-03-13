@@ -4,10 +4,8 @@ go 1.15
 
 require (
 	github.com/FusionAuth/go-client v0.0.0-20210306232522-985334282387
-	github.com/Workiva/go-datastructures v1.0.52
 	github.com/gin-gonic/gin v1.6.3
 	github.com/jackc/pgx/v4 v4.10.1
-	github.com/lib/pq v1.10.0
 	github.com/nirasan/go-oauth-pkce-code-verifier v0.0.0-20170819232839-0fbfe93532da
 	github.com/spf13/viper v1.7.1
 	github.com/stripe/stripe-go v70.15.0+incompatible // indirect
@@ -15,5 +13,4 @@ require (
 	github.com/thanhpk/randstr v1.0.4
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
 	gopkg.in/yaml.v2 v2.2.8
-	honnef.co/go/tools v0.0.1-2019.2.3
 )

@@ -7,8 +7,6 @@ import (
 	"fa-middleware/models"
 	"fmt"
 
-	"log"
-
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 )
 
@@ -19,8 +17,6 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 	// TODO: cookie that contains a refresh token from the gin context
 	// TODO: so that we can automatically grant the user a new JWT based on
 	// TODO: their refresh token
-
-	log.Printf("oauthState: %v", oauthState)
 
 	token, oauthError, err := fa.ExchangeOAuthCodeForAccessTokenUsingPKCE(
 		oauthState.Code,
@@ -44,7 +40,7 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 		)
 	}
 
-	user, err = GetUserByJWT(conf, fa, token.AccessToken)
+	user, err = GetUserByJWT(conf, token.AccessToken)
 	// userResp, errs, err := fa.RetrieveUserUsingJWT(token.AccessToken)
 	// userResp, errs, err := fa.RetrieveUserInfoFromAccessToken(token.AccessToken)
 	if err != nil {
@@ -59,8 +55,8 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 	return user, token.AccessToken, nil
 }
 
-func GetUserByJWT(conf config.Config, fa *fusionauth.FusionAuthClient, jwt string) (user fusionauth.User, err error) {
-	userResp, errs, err := fa.RetrieveUserUsingJWT(jwt)
+func GetUserByJWT(conf config.Config, jwt string) (user fusionauth.User, err error) {
+	userResp, errs, err := conf.FusionAuthClient.RetrieveUserUsingJWT(jwt)
 	// userResp, errs, err := fa.RetrieveUserInfoFromAccessToken(token.AccessToken)
 	if err != nil {
 		return user, fmt.Errorf(
