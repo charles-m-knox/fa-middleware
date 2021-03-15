@@ -3,6 +3,7 @@ package userdata
 import (
 	"fa-middleware/config"
 	"fa-middleware/models"
+	"time"
 
 	"context"
 	"fmt"
@@ -125,11 +126,12 @@ func GetValueForUser(conf config.Config, user fusionauth.User, field string) (st
 
 func SetValueForUser(conf config.Config, user fusionauth.User, field string, value string) error {
 	userData := models.UserData{
-		AppID:    conf.FusionAuthAppID,
-		TenantID: conf.FusionAuthTenantID,
-		UserID:   user.Id,
-		Field:    field,
-		Value:    value,
+		AppID:     conf.FusionAuthAppID,
+		TenantID:  conf.FusionAuthTenantID,
+		UserID:    user.Id,
+		Field:     field,
+		Value:     value,
+		UpdatedAt: time.Now().UnixNano() / 1000000,
 	}
 
 	err := SetUserData(conf, userData)

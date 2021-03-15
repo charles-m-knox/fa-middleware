@@ -207,6 +207,7 @@ type CreateCheckoutSessionResponse struct {
 // query params:
 // - ids=csv price IDs from stripe
 // - m=either "s" or "p" for subscription or one-time payment (no quotes)
+// TODO: if no ids are specified, just put in all of them? or choose a default?
 func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
 	sc := &client.API{}
 	sc.Init(conf.StripeSecretKey, nil)
