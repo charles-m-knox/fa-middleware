@@ -108,7 +108,6 @@ func main() {
 	})
 	r.GET("/pages/t/:file", func(c *gin.Context) {
 		fileName, ok := c.Params.Get("file")
-		log.Printf("/pages/t/: %v", fileName)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -146,6 +145,35 @@ func main() {
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
+	})
+	r.GET("/api/substatus", func(c *gin.Context) {
+		app, ok := conf.GetConfigForDomain(c.Request.Host)
+		if !ok {
+			c.Data(404, "text/plain", []byte("not found"))
+			return
+		}
+		user, err := routes.GetUserFromGin(c, app) // will set the gin response if there's an error
+		if err != nil {
+			return
+		}
+		productID := c.Query("p")
+		if productID == "" { // TODO: add validation that this app contains this product ID
+			c.Data(400, "text/plain", []byte("invalid p value"))
+			return
+		}
+		subscribed, err := payments.IsUserSubscribed(app, user, productID)
+		if err != nil {
+			log.Printf(
+				"failed to check app id %v if user id %v is subscribed to product ID %v: %v",
+				app.FusionAuthAppID,
+				user.Id,
+				productID,
+				err.Error(),
+			)
+			c.Data(500, "text/plain", []byte("server error"))
+			return
+		}
+		c.Data(200, "text/plain", []byte(fmt.Sprintf("%v", subscribed)))
 	})
 	r.GET("/pages/makepayment", func(c *gin.Context) {
 		app, ok := conf.GetConfigForDomain(c.Request.Host)

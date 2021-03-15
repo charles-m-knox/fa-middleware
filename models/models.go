@@ -12,6 +12,7 @@ type PostMutationBody struct {
 	Field  string `json:"f"`
 	Value  string `json:"v"`
 	Method string `json:"m"`
+	Key    string `json:"k"`
 }
 
 type UserData struct {
@@ -26,10 +27,12 @@ type UserData struct {
 type ProductPrice struct {
 	ID                     string
 	ProductID              string
+	IsSubscription         bool
 	RecurringInterval      string // day, week, month or year.
 	RecurringIntervalCount int64  // For example, interval=month and interval_count=3 bills every 3 months.
 	Price                  int64
 	PriceDecimal           float64
+	PriceStr               string
 	Currency               string
 	Description            string
 }
@@ -40,4 +43,15 @@ type ProductSummary struct {
 	Description string
 	ImageURL    string
 	Prices      []ProductPrice
+}
+
+type SubscriberField struct {
+	Field     string `yaml:"field"`
+	ProductID string `yaml:"productId"`
+}
+
+type MutableFields struct {
+	System         []string          `yaml:"system"`
+	User           []string          `yaml:"user"`
+	SubscriberOnly []SubscriberField `yaml:"subscriberOnly"`
 }

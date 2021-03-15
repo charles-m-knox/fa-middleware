@@ -27,7 +27,7 @@
                     url: "/api/mutate",
                     type: "POST",
                     data: JSON.stringify({
-                        "f": "testfield",
+                        "f": "saved_accounts",
                         "v": `${new Date().toUTCString()}`,
                         "m": "s"
                     }),
@@ -55,13 +55,21 @@
                     url: "/api/mutate",
                     type: "POST",
                     data: JSON.stringify({
-                        "f": "testfield",
+                        "f": "saved_accounts",
                         "m": "g"
                     }),
                     contentType: "application/json; charset=utf-8",
                     dataType: "json",
-                    success: function (data) {
-                        alert(data);
+                    statusCode: {
+                        200: (data) => {
+                            data.then((data2) => {
+                                console.log(data2);
+                                $("#data-fill-span").html(data2);
+                            });
+                            console.log("success event fired");
+                            console.log(data);
+                            alert(data);
+                        }
                     }
                 });
                 // $.post("/api/mutate",
@@ -69,11 +77,37 @@
                 //         "f": "testfield",
                 //         "m": "g"
                 //     },
-                //     function (data) {
-                //         alert(data);
+                //     function (data, status) {
+                //         console.log(data, status);
+                //         $("#data-fill-span").text(data);
                 //     },
-                //     "application/json"
+                //     "json"
                 // );
+            });
+            $("#get-subscriber-data-btn").click(function () {
+                $.ajax({
+                    url: "/api/mutate",
+                    type: "POST",
+                    data: JSON.stringify({
+                        "f": "saved_results",
+                        "m": "g"
+                    }),
+                    contentType: "application/json; charset=utf-8",
+                    dataType: "json",
+                });
+            });
+            $("#set-subscriber-data-btn").click(function () {
+                $.ajax({
+                    url: "/api/mutate",
+                    type: "POST",
+                    data: JSON.stringify({
+                        "f": "saved_results",
+                        "m": "s",
+                        "v": `${new Date().toUTCString()}`,
+                    }),
+                    contentType: "application/json; charset=utf-8",
+                    dataType: "json",
+                });
             });
         });
     </script>
@@ -92,6 +126,27 @@
                 <p>
                     <button id="set-data-btn" class="btn btn-primary mr-3">Set some data</button>
                     <button id="get-data-btn" class="btn btn-primary mr-3">Get the data that was just set</button>
+                </p>
+                <p>
+                    <button id="set-subscriber-data-btn" class="btn btn-primary mr-3">Set some subscriber-only
+                        data</button>
+                    <button id="get-subscriber-data-btn" class="btn btn-primary mr-3">Get the subscriber-only data that
+                        was just set</button>
+                </p>
+                <p>
+                    <button id="set-system-data-btn" class="btn btn-primary mr-3">Set some system-only
+                        data</button>
+                    <button id="get-system-data-btn" class="btn btn-primary mr-3">Get the system-only data that was just
+                        set</button>
+                </p>
+                <p>
+                    <span id="data-fill-span">Press one of the buttons.</span>
+                </p>
+                <p>
+                    <a href="/pages/t/stripecheckout.html">Back to checkout</a>.
+                </p>
+                <p>
+                    <a href="/pages/t/">Back to make payment page.</a>
                 </p>
             </div>
         </div>

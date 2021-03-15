@@ -5,7 +5,9 @@ import (
 	"fa-middleware/config"
 	"fa-middleware/htmltemplates"
 	"fa-middleware/models"
+	"fa-middleware/payments"
 	"fa-middleware/userdata"
+
 	"fmt"
 	"net/http"
 	"time"
@@ -147,9 +149,18 @@ func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuth
 		true,
 	)
 
-	c.Redirect(301, "/pages/welcome")
+	_, err = payments.PropagateUserToStripe(conf, user)
+	if err != nil {
+		log.Printf(
+			"failed to push user %v to stripe: %v",
+			user.Id,
+			err.Error(),
+		)
+		c.Redirect(301, "/pages/welcome")
+		return
+	}
 
-	// c.JSON(200, user)
+	c.Redirect(301, "/pages/welcome")
 }
 
 func GetAuthLogout(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
@@ -218,7 +229,6 @@ func GetAPICurrentUserEmail(c *gin.Context, conf config.Config, fa *fusionauth.F
 // - a jwt for the user
 // - the name of the field to modify in the db
 // - the value of the corresponding field to set in the db
-// TODO: test this api endpoint
 func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 	var mutation models.PostMutationBody
 	err := c.Bind(&mutation)
@@ -287,6 +297,31 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 		Value:    mutation.Value,
 	}
 
+	// check that the method is valid now, before checking if it's mutable,
+	// because the mutability check performs an API call to Stripe in some cases
+	// and can take time
+	if mutation.Method != "g" && mutation.Method != "s" {
+		c.Data(400, "text/plain", []byte("bad request"))
+		return
+	}
+
+	mutable, err := payments.IsFieldMutable(app, mutation)
+	if err != nil {
+		log.Printf(
+			"failed to check mutability for user id %v, field %v: %v",
+			user.Id,
+			mutation.Field,
+			err.Error(),
+		)
+		c.Data(500, "text/plain", []byte("server error"))
+		return
+	}
+
+	if !mutable {
+		c.Data(403, "text/plain", []byte("forbidden"))
+		return
+	}
+
 	switch mutation.Method {
 	case "g":
 		if userData.Value != "" {
@@ -295,25 +330,27 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 			return
 		}
 		// get the data via postgres
-		err = userdata.GetUserData(app, &userData)
+		// err = userdata.GetUserData(app, &userData)
+		value, err := userdata.GetValueForUser(app, user, mutation.Field)
 		if err != nil {
 			log.Printf("failed to write user data on mutation: %v", err.Error())
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
-		c.Data(200, "text/plain", []byte(userData.Value))
+		c.Data(200, "text/plain", []byte(value))
 		return
 	case "s":
 		// https://gobyexample.com/epoch
 		userData.UpdatedAt = time.Now().UnixNano() / 1000000
 		// write the data via postgres
-		err = userdata.SetUserData(app, userData)
+		// err = userdata.SetUserData(app, userData)
+		err := userdata.SetValueForUser(app, user, mutation.Field, mutation.Value)
 		if err != nil {
 			log.Printf("failed to write user data on mutation: %v", err.Error())
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
-		c.Data(200, "text/plain", []byte("done"))
+		c.Data(200, "text/plain", []byte(fmt.Sprintf("%v", userData.UpdatedAt)))
 		return
 	}
 

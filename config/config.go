@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fa-middleware/models"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -50,6 +51,8 @@ type Config struct {
 	StripePublicKey             string                       `yaml:"stripePublicKey"`
 	StripeSecretKey             string                       `yaml:"stripeSecretKey"`
 	StripeProducts              []StripeProduct              `yaml:"stripeProducts"`
+	MutationKey                 string                       `yaml:"mutationKey"`
+	MutableFields               models.MutableFields         `yaml:"mutableFields"`
 	RuntimeOauthState           string                       // will be set later
 	FusionAuthClient            *fusionauth.FusionAuthClient // will be set later
 	OauthConfig                 *oauth2.Config               // will be set later
@@ -57,6 +60,7 @@ type Config struct {
 	CodeVerif                   string                       // will be set later
 	CodeChallenge               string                       // will be set later
 	AuthCodeURL                 string                       // will be set later
+	StripeProductsFromAPI       []models.ProductSummary      // will be set later
 }
 
 type CompleteConfig struct {

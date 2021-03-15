@@ -29,6 +29,15 @@ apps:
         priceIds:
           - price_xxxxxxxxxxxxxxxxxxxxxxxx # <annotate price here>
           - price_xxxxxxxxxxxxxxxxxxxxxxxx # <annotate price here>
+    mutationKey: 8926dacdfb1d4d299f68d2c3b8329fff92adb4efabe44e789d5a6b0dd1b402b1 # allows system access to all fields via POST endpoint
+    mutableFields:
+      system: [] # TBD - currently the system can write any field
+      user:
+        - saved_accounts
+        - saved_strategies
+      subscriberOnly:
+        - field: saved_results
+          productId: prod_J7IXeVG4i02N2n
 
 global:
   bindAddr: 0.0.0.0

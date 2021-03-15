@@ -1,38 +1,95 @@
 package payments
 
 import (
+	"fa-middleware/auth"
 	"fa-middleware/config"
 	"fa-middleware/models"
+	"fa-middleware/userdata"
+
 	"log"
+	"strings"
 
 	"fmt"
 
+	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v72"
 	"github.com/stripe/stripe-go/v72/client"
 )
 
-// func MakePaymentIntent(conf config.Config, userId string) (pi *stripe.PaymentIntent, err error) {
-// 	// Set your secret key. Remember to switch to your live secret key in production.
-// 	// See your keys here: https://dashboard.stripe.com/account/apikeys
-// 	stripe.Key = conf.StripeSecretKey
+func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string) (bool, error) {
+	sc := &client.API{}
+	sc.Init(conf.StripeSecretKey, nil)
 
-// 	params := &stripe.PaymentIntentParams{
-// 		Amount:   stripe.Int64(1000),
-// 		Currency: stripe.String(string(stripe.CurrencyUSD)),
-// 		PaymentMethodTypes: stripe.StringSlice([]string{
-// 			"card",
-// 		}),
-// 		ReceiptEmail: stripe.String("jenny.rosen@example.com"),
-// 	}
+	existingStripeCustomerID, err := userdata.GetValueForUser(conf, user, "stripe_customer_id")
+	if err != nil {
+		return false, fmt.Errorf("failed to get customer id from local db: %v", err.Error())
+	}
 
-// 	pi, err = paymentintent.New(params)
-// 	if err != nil {
-// 		return pi, fmt.Errorf("failed to make paymentintent: %v", err.Error())
-// 	}
+	// query stripe to find the user
+	params := &stripe.CustomerParams{}
+	params.AddExpand("subscriptions")
+	customer, err := sc.Customers.Get(existingStripeCustomerID, params)
+	if err != nil {
+		return false, fmt.Errorf(
+			"failed to get customer id %v: %v",
+			existingStripeCustomerID,
+			err.Error(),
+		)
+	}
+	if customer.ID != existingStripeCustomerID {
+		return false, fmt.Errorf(
+			"customer id %v mismatched stripe customer id %v",
+			existingStripeCustomerID,
+			customer.ID,
+		)
+	}
+	for _, sub := range customer.Subscriptions.Data {
+		if sub.Plan.Product.ID == productID {
+			return sub.Status == stripe.SubscriptionStatusActive, nil
+		}
+	}
+	return false, nil
+}
 
-// 	return pi, nil
-// }
+func PropagateUserToStripe(conf config.Config, user fusionauth.User) (customerID string, err error) {
+	sc := &client.API{}
+	sc.Init(conf.StripeSecretKey, nil)
+
+	existingStripeCustomerID, err := userdata.GetValueForUser(conf, user, "stripe_customer_id")
+	if err != nil {
+		return "", fmt.Errorf("failed to get customer id from local db: %v", err.Error())
+	}
+
+	// customer probably doesn't exist, so let's try to create a new one in stripe
+	if existingStripeCustomerID == "" {
+		customer, err := sc.Customers.New(&stripe.CustomerParams{
+			Email: &user.Email,
+			Name:  &user.FullName,
+			Phone: &user.MobilePhone,
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to create new customer: %v", err.Error())
+		}
+
+		// push the customer's ID to database immediately!
+		log.Printf("new customer id: %v", customer.ID)
+		err = userdata.SetValueForUser(conf, user, "stripe_customer_id", customer.ID)
+		if err != nil {
+			return customer.ID, fmt.Errorf(
+				"failed to push customer id %v to database: %v",
+				customer.ID,
+				err.Error(),
+			)
+		}
+
+		return customer.ID, nil
+	}
+
+	// now the customer DOES exist already, so we don't have to propagate them to Stripe
+	// TODO: validate that the customer's email matches stripe email, and update if needed
+	return customerID, nil
+}
 
 // https://stripe.com/docs/api/products/retrieve
 func GetProducts(conf config.Config) (products []models.ProductSummary, err error) {
@@ -108,17 +165,22 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 			// the price has been validated; now add it to the list of prices
 			recurringInterval := ""
 			recurringIntervalCount := int64(0)
+			isSubscription := false
 			if stripePrice.Recurring != nil {
 				recurringInterval = string(stripePrice.Recurring.Interval)
 				recurringIntervalCount = stripePrice.Recurring.IntervalCount
+				isSubscription = true
 			}
+			priceStr := fmt.Sprintf("%.2f", stripePrice.UnitAmountDecimal/100.0)
 			productPrices = append(productPrices, models.ProductPrice{
 				ID:                     stripePrice.ID,
 				ProductID:              stripeProduct.ProductID,
+				IsSubscription:         isSubscription,
 				RecurringInterval:      recurringInterval,
 				RecurringIntervalCount: recurringIntervalCount,
 				Price:                  stripePrice.UnitAmount,
 				PriceDecimal:           stripePrice.UnitAmountDecimal,
+				PriceStr:               priceStr,
 				Currency:               string(stripePrice.Currency),
 				Description:            stripePrice.Nickname,
 			})
@@ -132,6 +194,8 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 		})
 	}
 
+	conf.StripeProductsFromAPI = products
+
 	return products, nil
 }
 
@@ -139,28 +203,66 @@ type CreateCheckoutSessionResponse struct {
 	SessionID string `json:"id"`
 }
 
+// https://stripe.com/docs/api/checkout/sessions/create
+// query params:
+// - ids=csv price IDs from stripe
+// - m=either "s" or "p" for subscription or one-time payment (no quotes)
 func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
 	sc := &client.API{}
 	sc.Init(conf.StripeSecretKey, nil)
+	// retrieve the products from stripe
+	products, err := GetProducts(conf)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to retrieve products for checkout session: %v",
+			err.Error(),
+		)
+	}
 	params := &stripe.CheckoutSessionParams{
 		PaymentMethodTypes: stripe.StringSlice([]string{
 			"card",
 		}),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{
-			&stripe.CheckoutSessionLineItemParams{
-				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency: stripe.String(string(stripe.CurrencyUSD)),
-					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name: stripe.String("T-shirt"),
-					},
-					UnitAmount: stripe.Int64(2000),
-				},
-				Quantity: stripe.Int64(1),
-			},
-		},
-		Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{},
+		// Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
 		SuccessURL: stripe.String(conf.FullDomainURL + "/pages/t/stripesuccess.html"),
 		CancelURL:  stripe.String(conf.FullDomainURL + "/pages/t/stripecancel.html"),
+	}
+
+	// populate the checkout with the provided price ids, if they exist
+	// retrieve the form query for the product ids
+	csvPriceIDs := c.Query("ids")
+	priceIDs := strings.Split(csvPriceIDs, ",")
+	priceMode := c.Query("m") // must be either "s" for subscription or "p" for one-type payment
+	switch priceMode {
+	case "p":
+		params.Mode = stripe.String(string(stripe.CheckoutSessionModePayment))
+	case "s":
+		params.Mode = stripe.String(string(stripe.CheckoutSessionModeSubscription))
+	default:
+		return fmt.Errorf("priceMode query parameter was not set to either 'p' or 's'")
+	}
+	for _, product := range products {
+		for _, price := range product.Prices {
+			for _, queriedPriceID := range priceIDs {
+				if queriedPriceID == price.ID {
+					// we found a price that was requested by the URL that was entered,
+					// so proceed to add it to the LineItems for the Stripe checkout.
+					// But first, we have to ignore all prices that don't match the query parameter
+					// for a subscription vs. a one-time payment
+					if priceMode == "s" && price.RecurringInterval == "" {
+						break
+					}
+					if priceMode == "m" && price.RecurringInterval != "" {
+						break
+					}
+					params.LineItems = append(params.LineItems, &stripe.CheckoutSessionLineItemParams{
+						Price:    stripe.String(queriedPriceID),
+						Quantity: stripe.Int64(1),
+					})
+					break
+				}
+			}
+		}
 	}
 
 	// session, err := session.New(params)
@@ -175,4 +277,52 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
 
 	c.JSON(200, data)
 	return nil
+}
+
+// IsFieldMutable tests if the desired field can be changed according to whether
+// or not the mutation request has sufficient privileges - system, user, subscriber.
+func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool, error) {
+	if mutation.Key == conf.MutationKey {
+		return true, nil
+	}
+
+	if mutation.JWT != "" {
+		user, err := auth.GetUserByJWT(conf, mutation.JWT)
+		if err != nil {
+			return false, fmt.Errorf("failed to check user jwt during mutability check: %v", err.Error())
+		}
+		// check if the field is a system field
+		for _, sysField := range conf.MutableFields.System {
+			if mutation.Field == sysField {
+				return false, nil
+			}
+		}
+
+		// check if the field is a user-only field
+		for _, userField := range conf.MutableFields.User {
+			if mutation.Field == userField {
+				return true, nil
+			}
+		}
+
+		// check if the field is a subscriber-only field
+		for _, subscriberField := range conf.MutableFields.SubscriberOnly {
+			if mutation.Field == subscriberField.Field {
+				// check if the user is a stripe subscriber
+				subbed, err := IsUserSubscribed(conf, user, subscriberField.ProductID)
+				if err != nil {
+					return false, fmt.Errorf(
+						"failed to check if user %v is subscribed to modify field %v for product id %v: %v",
+						user.Id,
+						mutation.Field,
+						subscriberField.ProductID,
+						err.Error(),
+					)
+				}
+				return subbed, nil
+			}
+		}
+	}
+
+	return false, nil
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	"github.com/jackc/pgx/v4"
 )
 
@@ -20,11 +21,6 @@ func SetUserData(conf config.Config, userData models.UserData) error {
 		conf.PostgresDBName,
 		conf.PostgresOptions,
 	)
-
-	// userDataBytes, err := json.Marshal(userData)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to marshal user data: %v", err.Error())
-	// }
 
 	// https://github.com/jackc/pgx#example-usage
 	conn, err := pgx.Connect(context.Background(), connStr)
@@ -98,7 +94,51 @@ func GetUserData(conf config.Config, userData *models.UserData) error {
 		userData.Field,
 	).Scan(&userData.Value)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil
+		}
 		return fmt.Errorf("failed to query select id %v field %v: %v", userData.UserID, userData.Field, err.Error())
+	}
+
+	return nil
+}
+
+func GetValueForUser(conf config.Config, user fusionauth.User, field string) (string, error) {
+	userData := models.UserData{
+		AppID:    conf.FusionAuthAppID,
+		TenantID: conf.FusionAuthTenantID,
+		UserID:   user.Id,
+		Field:    field,
+	}
+
+	err := GetUserData(conf, &userData)
+	if err != nil {
+		return "", fmt.Errorf(
+			"failed to get field %v value for user: %v",
+			field,
+			err.Error(),
+		)
+	}
+
+	return userData.Value, nil
+}
+
+func SetValueForUser(conf config.Config, user fusionauth.User, field string, value string) error {
+	userData := models.UserData{
+		AppID:    conf.FusionAuthAppID,
+		TenantID: conf.FusionAuthTenantID,
+		UserID:   user.Id,
+		Field:    field,
+		Value:    value,
+	}
+
+	err := SetUserData(conf, userData)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to set field %v value for user: %v",
+			field,
+			err.Error(),
+		)
 	}
 
 	return nil

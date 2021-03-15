@@ -11,7 +11,7 @@ This repository contains the building blocks for a FusionAuth-based middleware l
   - [Fusion Auth](#fusion-auth)
     - [Login directly](#login-directly)
   - [Managing the database](#managing-the-database)
-  - [Needed features](#needed-features)
+  - [Features](#features)
   - [Schema discussion](#schema-discussion)
     - [Table definition](#table-definition)
   - [TODO](#todo)
@@ -63,6 +63,7 @@ Useful docs for Stripe:
 
 * https://stripe.com/docs/payments/integration-builder
 * https://stripe.com/docs/api/authentication
+* https://stripe.com/docs/api/customers/object#customer_object-subscriptions
 
 ## Fusion Auth
 
@@ -80,14 +81,25 @@ curl -vvv -X POST -H "Content-Type: application/json" -d '{"loginId":"test2@site
 
 Using `adminer`, which is included in the docker compose file, you can navigate to `http://localhost:9015` and log in to the postgres db.
 
-## Needed features
+## Features
 
-* Support user management API endpoints: https://fusionauth.io/docs/v1/tech/apis/users/#create-a-user
-  * Password reset API endpoint, or figure out how to do it in FusionAuth
-  * Change password API endpoint, or figure out how to do it in FusionAuth
-  * Updating a user's info https://fusionauth.io/docs/v1/tech/apis/users/#update-a-user
-* Multi-tenancy - multiple apps should be able to interface via this middleware into a single FusionAuth instance
-* Stripe integration - complements multi-tenancy by enabling payments to be tracked across different projects
+* [ ] Support user management API endpoints: https://fusionauth.io/docs/v1/tech/apis/users/#create-a-user
+  * [ ] Password reset API endpoint, or figure out how to do it in FusionAuth - this is done by just providing a link to the `/??` URL in fusion auth
+  * [ ] Change password API endpoint, or figure out how to do it in FusionAuth - this is done by just providing a link to the `/??` URL in fusion auth
+  * [ ] Logout API endpoint - this is done by just providing a link to the `/logout` URL in fusion auth
+  * [ ] Updating a user's FusionAuth info (separate from the user data db) https://fusionauth.io/docs/v1/tech/apis/users/#update-a-user
+* [x] Multi-tenancy - multiple apps should be able to interface via this middleware into a single FusionAuth instance
+  * [x] Allow for any API to write data to the user storage database, to allow for custom API's to hook into this middleware service - this is accomplished using the secret `mutationKey` in the `config.yml`
+  * [ ] Allow for a `mutationKey` to be combined with a specific domain for extra security
+* [x] Stripe integration - complements multi-tenancy by enabling payments to be tracked across different projects
+  * [x] Allow for subscriber-only fields to be locked when users don't have a subscription
+  * [x] Allow for one-time payments to be queued for checkout (such as donations) in addition to subscriptions - this is done by setting multiple `stripeProducts` in the `config.yml`
+  * [x] Persist Stripe customer ID's to the user storage database
+  * [ ] Persist Stripe customer ID's to the FusionAuth user storage database
+  * [x] Propagate users to Stripe as customers on login
+* [x] Revision history to allow any field to be "rewound"
+  * [ ] Each time the user saves a change on the frontend, we capture up to `X` (configurable) revisions in the database - could implement this by truncating in a separate thread every time a field is mutated
+* [x] Basic HTML templating to help bootstrap testing
 
 ## Schema discussion
 
@@ -118,7 +130,9 @@ This is an initial draft of a possible database schema:
 
 ## TODO
 
-* Add a secret key to better secure other microservices' access to the mutation and user data endpoints
-* create customer with UserID, tenantID, applicationID?
-* list out products from stripe
-* enable one-time purchasing
+* document the api endpoints properly
+* add a goroutine call to truncate field/value revision history in the db > 100 for rows matching:
+  * user id
+  * tenant id
+  * app id
+  * field name

@@ -10,13 +10,21 @@
 
 <body>
     <section>
+        {{range .Conf.StripeProductsFromAPI}}
         <div class="product">
-            <img src="https://i.imgur.com/EHyR2nP.png" alt="The cover of Stubborn Attachments" />
+            <img src="{{.ImageURL}}" alt="{{.Name}}" />
+            {{range .Prices}}
             <div class="description">
-                <h3>Stubborn Attachments</h3>
-                <h5>$20.00</h5>
+                <h3>{{.Description}}</h3>
+                {{if .IsSubscription}}
+                <h5>${{.PriceStr}} subscription, every {{.RecurringIntervalCount}} {{.RecurringInterval}}</h5>
+                {{else}}
+                <h5>${{.PriceStr}} one-time fee</h5>
+                {{end}}
             </div>
+            {{end}}
         </div>
+        {{end}}
         <button type="button" id="checkout-button">Checkout</button>
     </section>
 </body>
@@ -26,7 +34,7 @@
     var checkoutButton = document.getElementById("checkout-button");
 
     checkoutButton.addEventListener("click", function () {
-        fetch("/api/create-checkout-session", {
+        fetch("/api/create-checkout-session?m=p&ids=", {
             method: "POST",
         })
             .then(function (response) {
