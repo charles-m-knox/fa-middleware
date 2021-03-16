@@ -3,6 +3,7 @@
 apps:
   - domain: localhost:8080
     fullDomainURL: http://localhost:8080
+    authCallbackRedirectURL: /pages/welcome  # can be a full url too
     fusionAuthHost: http://fusionauth:9011
     fusionAuthPublicHost: http://localhost:9011
     fusionAuthAPIKey: OCnxf7Vf40WzZM_qg1ut1-Oy-gFaQsriypp4MLRzaDCyZ96kXKlibk5x
@@ -24,6 +25,8 @@ apps:
     jwtCookieName: "s"
     stripePublicKey: asdf
     stripeSecretKey: asdf
+    stripePaymentSuccessURL: http://localhost:8080/pages/t/stripesuccess.html
+    stripePaymentCancelURL: http://localhost:8080/pages/t/stripecancel.html
     stripeProducts:
       - productId: prod_xxxxxxxxxxxxxx # <annotate product here>
         priceIds:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	viper "github.com/spf13/viper"
@@ -30,6 +31,7 @@ type StripeProduct struct {
 type Config struct {
 	Domain                      string                       `yaml:"domain"`
 	FullDomainURL               string                       `yaml:"fullDomainURL"`
+	AuthCallbackRedirectURL     string                       `yaml:"authCallbackRedirectURL"`
 	FusionAuthHost              string                       `yaml:"fusionAuthHost"`       // "http://fusionauth:9011"
 	FusionAuthPublicHost        string                       `yaml:"fusionAuthPublicHost"` // "http://localhost:9011"
 	FusionAuthAPIKey            string                       `yaml:"fusionAuthAPIKey"`
@@ -50,6 +52,8 @@ type Config struct {
 	JWTCookieName               string                       `yaml:"jwtCookieName"`      // sets the "secure" flag for the jwt cookie
 	StripePublicKey             string                       `yaml:"stripePublicKey"`
 	StripeSecretKey             string                       `yaml:"stripeSecretKey"`
+	StripePaymentSuccessURL     string                       `yaml:"stripePaymentSuccessURL"`
+	StripePaymentCancelURL      string                       `yaml:"stripePaymentCancelURL"`
 	StripeProducts              []StripeProduct              `yaml:"stripeProducts"`
 	MutationKey                 string                       `yaml:"mutationKey"`
 	MutableFields               models.MutableFields         `yaml:"mutableFields"`
@@ -119,6 +123,31 @@ func LoadConfig() (conf CompleteConfig, err error) {
 func (conf *CompleteConfig) GetConfigForDomain(domain string) (Config, bool) {
 	for _, app := range conf.Applications {
 		if app.Domain == domain {
+			return app, true
+		}
+	}
+
+	return Config{}, false
+}
+
+func (conf *CompleteConfig) GetConfigForOrigin(origin string) (Config, bool) {
+	// trim the trailing slash from the referer
+	orig := origin
+	if strings.HasSuffix(origin, "/") {
+		orig = origin[:len(origin)-len("/")]
+	}
+	for _, app := range conf.Applications {
+		if app.FullDomainURL == orig {
+			return app, true
+		}
+	}
+
+	return Config{}, false
+}
+
+func (conf *CompleteConfig) GetConfigForAppID(appID string) (Config, bool) {
+	for _, app := range conf.Applications {
+		if app.FusionAuthAppID == appID {
 			return app, true
 		}
 	}

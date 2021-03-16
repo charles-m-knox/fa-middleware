@@ -3,7 +3,6 @@ package routes
 import (
 	"fa-middleware/auth"
 	"fa-middleware/config"
-	"fa-middleware/htmltemplates"
 	"fa-middleware/models"
 	"fa-middleware/payments"
 	"fa-middleware/userdata"
@@ -17,6 +16,25 @@ import (
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	"github.com/gin-gonic/gin"
 )
+
+// GetConfigViaRouteOrigin sets the CORS headers that will allow HttpOnly
+// cookies to work when requests are made via the web browser, as well as
+// automatically retrieving the app config that corresponds to the request
+// origin
+func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app config.Config, origin string, success bool) {
+	origin = c.Request.Header.Get("Origin")
+	if origin == "" {
+		return app, origin, false
+	}
+	log.Printf("origin: %v", origin)
+	app, ok := conf.GetConfigForOrigin(origin)
+	if !ok {
+		return app, origin, false
+	}
+	c.Header("Access-Control-Allow-Origin", origin)
+	c.Header("Access-Control-Allow-Credentials", "true")
+	return app, origin, true
+}
 
 // GetUserFromGin extracts the user via the JWT HttpOnly cookie and will
 // set the gin response if there's an error
@@ -45,36 +63,57 @@ func GetUserFromGin(c *gin.Context, conf config.Config) (user fusionauth.User, e
 	return user, nil
 }
 
-func LoggedIn(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
+type LoggedInResponse struct {
+	LoggedIn     bool   `json:"loggedIn"`
+	UserID       string `json:"userId"`
+	UserEmail    string `json:"userEmail"`
+	UserFullName string `json:"userFullName"`
+}
+
+func GetJWTFromGin(c *gin.Context, conf config.Config) string {
 	cookies := c.Request.Cookies()
-	jwt := ""
 	for _, cookie := range cookies {
 		if cookie.Name == conf.JWTCookieName {
-			jwt = cookie.Value
-			break
+			return cookie.Value
 		}
 	}
 
+	return ""
+}
+
+// LoggedIn allows the frontend to quickly check if the user is logged in.
+func LoggedIn(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
+	jwt := GetJWTFromGin(c, conf)
+	loggedInResponse := LoggedInResponse{}
+
 	if jwt == "" {
-		c.Data(403, "text/plain", []byte("unauthorized"))
+		log.Printf("loggedin: empty jwt")
+		c.JSON(200, loggedInResponse)
 		return
 	}
 
 	// check if the user has a valid jwt
 	user, err := auth.GetUserByJWT(conf, jwt)
 	if err != nil {
-		c.Data(403, "text/plain", []byte("unauthorized"))
+		log.Printf("loggedin: couldn't get user")
+		c.JSON(200, loggedInResponse)
 		return
 	}
 
+	loggedInResponse.UserID = user.Id
+	loggedInResponse.UserEmail = user.Email
+	loggedInResponse.UserFullName = user.FullName
+
+	c.JSON(200, loggedInResponse)
+
 	// render the loggedin.html template
-	htmlstr, err := htmltemplates.GetLoggedInTemplate(user)
-	if err != nil {
-		log.Printf("error getting template: %v", err.Error())
-		c.Data(500, "text/plain", []byte("server error!"))
-		return
-	}
-	c.Data(200, "text/html", []byte(htmlstr))
+	// htmlstr, err := htmltemplates.GetLoggedInTemplate(user)
+	// if err != nil {
+	// 	log.Printf("error getting template: %v", err.Error())
+	// 	c.Data(500, "text/plain", []byte("server error!"))
+	// 	return
+	// }
+	// c.Data(200, "text/html", []byte(htmlstr))
 }
 
 func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient, codeVerif string) {
@@ -156,11 +195,11 @@ func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuth
 			user.Id,
 			err.Error(),
 		)
-		c.Redirect(301, "/pages/welcome")
+		c.Redirect(301, conf.AuthCallbackRedirectURL)
 		return
 	}
 
-	c.Redirect(301, "/pages/welcome")
+	c.Redirect(301, conf.AuthCallbackRedirectURL)
 }
 
 func GetAuthLogout(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
@@ -241,9 +280,10 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 
 	// allows for requests to come from either this API directly
 	// or from some other service
-	// TODO: allow for a passlist of c.Request.Host values so that requests
+	// TODO: allow for a passlist of domain values so that requests
 	// can only come from other approved locations
-	app, ok := conf.GetConfigForDomain(c.Request.Host)
+	// app, ok := conf.GetConfigForDomain(c.Request.Host) // old
+	app, _, ok := GetConfigViaRouteOrigin(c, conf)
 	if !ok {
 		log.Printf(
 			"post mutation: didn't find domain %v, trying mutation body",
@@ -257,23 +297,26 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 	}
 
 	// need to extract the HttpOnly cookie because it won't be included in the request
-	cookies := c.Request.Cookies()
-	mutation.JWT = ""
-	for _, cookie := range cookies {
-		if cookie.Name == app.JWTCookieName {
-			mutation.JWT = cookie.Value
-			break
-		}
-	}
+	// cookies := c.Request.Cookies()
+	// mutation.JWT = ""
+	// for _, cookie := range cookies {
+	// 	if cookie.Name == app.JWTCookieName {
+	// 		mutation.JWT = cookie.Value
+	// 		break
+	// 	}
+	// }
 
-	if mutation.JWT == "" {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
+	// if mutation.JWT == "" {
+	// 	c.Data(403, "text/plain", []byte("unauthorized"))
+	// 	return
+	// }
+
+	mutation.JWT = GetJWTFromGin(c, app)
 
 	// talk to fusionauth to validate the jwt
 	user, err := auth.GetUserByJWT(app, mutation.JWT)
 	if err != nil {
+		log.Printf("unauthorized user mutation")
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return
 	}
@@ -318,6 +361,7 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 	}
 
 	if !mutable {
+		log.Printf("field %v is not mutable by user %v", mutation.Field, user.Id)
 		c.Data(403, "text/plain", []byte("forbidden"))
 		return
 	}

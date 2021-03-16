@@ -106,26 +106,27 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 			)
 		}
 		// validate that the metadata for the product matches
-		productAppID, ok := product.Metadata["appId"]
-		if !ok || productAppID != conf.FusionAuthAppID {
-			log.Printf(
-				"appId=%v from stripe not defined or mismatched from configured app id=%v for product id %v",
-				productAppID,
-				conf.FusionAuthAppID,
-				stripeProduct.ProductID,
-			)
-			continue
-		}
-		productTenantID, ok := product.Metadata["tenantId"]
-		if !ok || productTenantID != conf.FusionAuthTenantID {
-			log.Printf(
-				"tenantId=%v from stripe not defined or mismatched from configured tenant id=%v for product id %v",
-				productTenantID,
-				conf.FusionAuthTenantID,
-				stripeProduct.ProductID,
-			)
-			continue
-		}
+		// TODO: re-enable if needed
+		// productAppID, ok := product.Metadata["appId"]
+		// if !ok || productAppID != conf.FusionAuthAppID {
+		// 	log.Printf(
+		// 		"appId=%v from stripe not defined or mismatched from configured app id=%v for product id %v",
+		// 		productAppID,
+		// 		conf.FusionAuthAppID,
+		// 		stripeProduct.ProductID,
+		// 	)
+		// 	continue
+		// }
+		// productTenantID, ok := product.Metadata["tenantId"]
+		// if !ok || productTenantID != conf.FusionAuthTenantID {
+		// 	log.Printf(
+		// 		"tenantId=%v from stripe not defined or mismatched from configured tenant id=%v for product id %v",
+		// 		productTenantID,
+		// 		conf.FusionAuthTenantID,
+		// 		stripeProduct.ProductID,
+		// 	)
+		// 	continue
+		// }
 		if !product.Active {
 			continue
 		}
@@ -154,6 +155,7 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 					"stripe price %v doesn't have corresponding product, skipping",
 					stripePrice.ID,
 				)
+				continue
 			}
 			if stripePrice.Product.ID != stripeProduct.ProductID {
 				log.Printf(
@@ -161,6 +163,7 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 					stripePrice.ID,
 					stripeProduct.ProductID,
 				)
+				continue
 			}
 			// the price has been validated; now add it to the list of prices
 			recurringInterval := ""
@@ -225,14 +228,22 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
 		}),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{},
 		// Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-		SuccessURL: stripe.String(conf.FullDomainURL + "/pages/t/stripesuccess.html"),
-		CancelURL:  stripe.String(conf.FullDomainURL + "/pages/t/stripecancel.html"),
+		// SuccessURL: stripe.String(conf.FullDomainURL + "/pages/t/stripesuccess.html"),
+		SuccessURL: stripe.String(conf.StripePaymentSuccessURL),
+		// CancelURL:  stripe.String(conf.FullDomainURL + "/pages/t/stripecancel.html"),
+		CancelURL: stripe.String(conf.StripePaymentCancelURL),
 	}
 
 	// populate the checkout with the provided price ids, if they exist
-	// retrieve the form query for the product ids
+	// retrieve the form query for the product ids. Otherwise, add them all
+	// TODO: add "default line item" in config
 	csvPriceIDs := c.Query("ids")
 	priceIDs := strings.Split(csvPriceIDs, ",")
+	if csvPriceIDs == "" {
+		for _, stripeProduct := range conf.StripeProducts {
+			priceIDs = append(priceIDs, stripeProduct.PriceIDs...)
+		}
+	}
 	priceMode := c.Query("m") // must be either "s" for subscription or "p" for one-type payment
 	switch priceMode {
 	case "p":

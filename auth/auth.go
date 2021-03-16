@@ -10,6 +10,14 @@ import (
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 )
 
+func GetOauthRedirectURL(conf config.Config) string {
+	return fmt.Sprintf(
+		"%v/%v",
+		conf.FusionAuthOauthRedirectURL,
+		conf.FusionAuthAppID,
+	)
+}
+
 // Login logs in the user using the FusionAuth Go client library
 func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState models.OauthState) (user fusionauth.User, jwt string, err error) {
 	// TODO: Use https://fusionauth.io/docs/v1/tech/apis/jwt/#retrieve-refresh-tokens
@@ -22,7 +30,7 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 		oauthState.Code,
 		conf.FusionAuthOauthClientID,
 		conf.FusionAuthOauthClientSecret,
-		conf.FusionAuthOauthRedirectURL,
+		GetOauthRedirectURL(conf),
 		oauthState.Verifier,
 	)
 
