@@ -5,6 +5,8 @@ import (
 	"fa-middleware/config"
 	"fa-middleware/models"
 	"fa-middleware/userdata"
+	"regexp"
+	"time"
 
 	"log"
 	"strings"
@@ -17,6 +19,46 @@ import (
 	"github.com/stripe/stripe-go/v72/client"
 )
 
+type CachedUser struct {
+	CacheTime  time.Time
+	Subscribed bool
+}
+
+var SubscribedUserCache map[string]CachedUser
+
+// InitializeSubscribedUserCache should be called once at the beginning of
+// the program
+func InitializeSubscribedUserCache() {
+	SubscribedUserCache = make(map[string]CachedUser)
+}
+
+func (cachedUser *CachedUser) IsUserCacheExpired() bool {
+	return time.Now().After(cachedUser.CacheTime.Add(time.Second * 30))
+}
+
+func AddUserToCache(stripeCustomerID string, substate bool) {
+	SubscribedUserCache[stripeCustomerID] = CachedUser{
+		CacheTime:  time.Now(),
+		Subscribed: substate,
+	}
+}
+
+// IsUserSubscribedCached checks if a user is subscribed via cache
+func IsUserSubscribedCached(stripeCustomerID string) (subbed bool, cacheExpired bool) {
+	cachedUser, ok := SubscribedUserCache[stripeCustomerID]
+	cacheExpired = cachedUser.IsUserCacheExpired()
+	if !ok || cacheExpired {
+		// the user's cached value has expired, or the user has not yet been
+		// cached at all, so we need to hit the stripe API
+		return false, cacheExpired
+	}
+
+	// at this point the user has been cached previously, AND the cache value
+	// has not expired yet, so it is valid to assume that cached value is
+	// correct
+	return cachedUser.Subscribed, false
+}
+
 func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string) (bool, error) {
 	sc := &client.API{}
 	sc.Init(conf.StripeSecretKey, nil)
@@ -24,6 +66,11 @@ func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string
 	existingStripeCustomerID, err := userdata.GetValueForUser(conf, user, "stripe_customer_id")
 	if err != nil {
 		return false, fmt.Errorf("failed to get customer id from local db: %v", err.Error())
+	}
+
+	subscribedViaCache, cacheExpired := IsUserSubscribedCached(existingStripeCustomerID)
+	if subscribedViaCache && !cacheExpired {
+		return true, nil
 	}
 
 	// query stripe to find the user
@@ -46,9 +93,11 @@ func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string
 	}
 	for _, sub := range customer.Subscriptions.Data {
 		if sub.Plan.Product.ID == productID {
+			AddUserToCache(existingStripeCustomerID, sub.Status == stripe.SubscriptionStatusActive)
 			return sub.Status == stripe.SubscriptionStatusActive, nil
 		}
 	}
+	AddUserToCache(existingStripeCustomerID, false)
 	return false, nil
 }
 
@@ -159,8 +208,9 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 			}
 			if stripePrice.Product.ID != stripeProduct.ProductID {
 				log.Printf(
-					"price id %v and product id %v mismatch, ignoring",
+					"price id %v and product id %v ?= %v mismatch, ignoring",
 					stripePrice.ID,
+					stripePrice.Product.ID,
 					stripeProduct.ProductID,
 				)
 				continue
@@ -211,7 +261,7 @@ type CreateCheckoutSessionResponse struct {
 // - ids=csv price IDs from stripe
 // - m=either "s" or "p" for subscription or one-time payment (no quotes)
 // TODO: if no ids are specified, just put in all of them? or choose a default?
-func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
+func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.User) error {
 	sc := &client.API{}
 	sc.Init(conf.StripeSecretKey, nil)
 	// retrieve the products from stripe
@@ -226,7 +276,8 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config) error {
 		PaymentMethodTypes: stripe.StringSlice([]string{
 			"card",
 		}),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{},
+		CustomerEmail: &user.Email,
+		LineItems:     []*stripe.CheckoutSessionLineItemParams{},
 		// Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
 		// SuccessURL: stripe.String(conf.FullDomainURL + "/pages/t/stripesuccess.html"),
 		SuccessURL: stripe.String(conf.StripePaymentSuccessURL),
@@ -308,6 +359,17 @@ func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool,
 			if mutation.Field == sysField {
 				return false, nil
 			}
+			// check if regexp is defined and matches
+			fieldRegExpMatch := false
+			if sysField != "" {
+				fieldRegExpMatch, err = regexp.Match(sysField, []byte(mutation.Field))
+				if err != nil {
+					log.Printf("regexp err, sys field %v: %v", mutation.Field, err.Error())
+				}
+			}
+			if fieldRegExpMatch {
+				return true, nil
+			}
 		}
 
 		// check if the field is a user-only field
@@ -315,11 +377,30 @@ func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool,
 			if mutation.Field == userField {
 				return true, nil
 			}
+			// check if regexp is defined and matches
+			fieldRegExpMatch := false
+			if userField != "" {
+				fieldRegExpMatch, err = regexp.Match(userField, []byte(mutation.Field))
+				if err != nil {
+					log.Printf("regexp err, user field %v: %v", mutation.Field, err.Error())
+				}
+			}
+			if fieldRegExpMatch {
+				return true, nil
+			}
 		}
 
 		// check if the field is a subscriber-only field
 		for _, subscriberField := range conf.MutableFields.SubscriberOnly {
-			if mutation.Field == subscriberField.Field {
+			// check if regexp is defined and matches
+			fieldRegExpMatch := false
+			if subscriberField.FieldRegExp != "" {
+				fieldRegExpMatch, err = regexp.Match(subscriberField.FieldRegExp, []byte(mutation.Field))
+				if err != nil {
+					log.Printf("regexp err, sub field %v: %v", mutation.Field, err.Error())
+				}
+			}
+			if mutation.Field == subscriberField.Field || fieldRegExpMatch {
 				// check if the user is a stripe subscriber
 				subbed, err := IsUserSubscribed(conf, user, subscriberField.ProductID)
 				if err != nil {

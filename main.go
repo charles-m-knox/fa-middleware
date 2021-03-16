@@ -27,6 +27,8 @@ func main() {
 	// 	log.Fatalf("failed to load config: %v", err.Error())
 	// }
 
+	payments.InitializeSubscribedUserCache()
+
 	conf, err := config.LoadConfigYaml()
 	if err != nil {
 		log.Fatalf("failed to load config2: %v", err.Error())
@@ -132,6 +134,7 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
+		c.Header("Access-Control-Allow-Methods", "OPTIONS, POST")
 		c.Data(200, "text/plain", []byte("OK"))
 	})
 	r.POST("/api/create-checkout-session", func(c *gin.Context) {
@@ -144,7 +147,8 @@ func main() {
 		if err != nil {
 			return
 		}
-		err = payments.CreateCheckoutSession(c, app) // will set the gin response unless there's an error
+		c.Header("Access-Control-Allow-Methods", "OPTIONS, POST")
+		err = payments.CreateCheckoutSession(c, app, user) // will set the gin response unless there's an error
 		if err != nil {
 			log.Printf("failed to create checkout session for user %v: %v", user.Id, err.Error())
 			c.Data(500, "text/plain", []byte("server error"))
@@ -280,6 +284,8 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
+		c.Header("Access-Control-Allow-Methods", "OPTIONS, POST")
+		c.Header("Access-Control-Allow-Headers", "X-PINGOTHER, content-type")
 		c.Data(200, "text/plain", []byte("OK"))
 	})
 	r.POST("/api/mutate", func(c *gin.Context) {
@@ -288,6 +294,8 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
+		c.Header("Access-Control-Allow-Methods", "OPTIONS, POST")
+		c.Header("Access-Control-Allow-Headers", "X-PINGOTHER, content-type")
 		routes.PostMutation(c, conf)
 	})
 	r.OPTIONS("/api/products", func(c *gin.Context) {

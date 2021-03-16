@@ -40,6 +40,7 @@ apps:
         - saved_strategies
       subscriberOnly:
         - field: saved_results
+          fieldRegExp: ^saved_results.*$
           productId: prod_J7IXeVG4i02N2n
 
 global:

@@ -93,6 +93,8 @@ Using `adminer`, which is included in the docker compose file, you can navigate 
   * [ ] Allow for a `mutationKey` to be combined with a specific domain for extra security
 * [x] Stripe integration - complements multi-tenancy by enabling payments to be tracked across different projects
   * [x] Allow for subscriber-only fields to be locked when users don't have a subscription
+  * [x] Field locking based on subscription state, with regular expression matching
+  * [x] Caching of subscription state so we don't overload Stripe API's, currently hardcoded to 30 seconds
   * [x] Allow for one-time payments to be queued for checkout (such as donations) in addition to subscriptions - this is done by setting multiple `stripeProducts` in the `config.yml`
   * [x] Persist Stripe customer ID's to the user storage database
   * [ ] Persist Stripe customer ID's to the FusionAuth user storage database

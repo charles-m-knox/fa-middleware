@@ -46,8 +46,9 @@ type ProductSummary struct {
 }
 
 type SubscriberField struct {
-	Field     string `yaml:"field"`
-	ProductID string `yaml:"productId"`
+	Field       string `yaml:"field"`
+	FieldRegExp string `yaml:"fieldRegExp"`
+	ProductID   string `yaml:"productId"`
 }
 
 type MutableFields struct {
