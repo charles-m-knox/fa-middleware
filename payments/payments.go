@@ -32,20 +32,26 @@ func InitializeSubscribedUserCache() {
 	SubscribedUserCache = make(map[string]CachedUser)
 }
 
+func getCustomerProductCacheStr(stripeCustomerID string, stripeProductID string) string {
+	return fmt.Sprintf("%v_%v", stripeCustomerID, stripeProductID)
+}
+
 func (cachedUser *CachedUser) IsUserCacheExpired() bool {
 	return time.Now().After(cachedUser.CacheTime.Add(time.Second * 30))
 }
 
-func AddUserToCache(stripeCustomerID string, substate bool) {
-	SubscribedUserCache[stripeCustomerID] = CachedUser{
+func AddUserToCache(stripeCustomerID string, stripeProductID string, substate bool) {
+	cacheStr := getCustomerProductCacheStr(stripeCustomerID, stripeProductID)
+	SubscribedUserCache[cacheStr] = CachedUser{
 		CacheTime:  time.Now(),
 		Subscribed: substate,
 	}
 }
 
 // IsUserSubscribedCached checks if a user is subscribed via cache
-func IsUserSubscribedCached(stripeCustomerID string) (subbed bool, cacheExpired bool) {
-	cachedUser, ok := SubscribedUserCache[stripeCustomerID]
+func IsUserSubscribedCached(stripeCustomerID string, stripeProductID string) (subbed bool, cacheExpired bool) {
+	cacheStr := getCustomerProductCacheStr(stripeCustomerID, stripeProductID)
+	cachedUser, ok := SubscribedUserCache[cacheStr]
 	cacheExpired = cachedUser.IsUserCacheExpired()
 	if !ok || cacheExpired {
 		// the user's cached value has expired, or the user has not yet been
@@ -68,7 +74,7 @@ func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string
 		return false, fmt.Errorf("failed to get customer id from local db: %v", err.Error())
 	}
 
-	subscribedViaCache, cacheExpired := IsUserSubscribedCached(existingStripeCustomerID)
+	subscribedViaCache, cacheExpired := IsUserSubscribedCached(existingStripeCustomerID, productID)
 	if subscribedViaCache && !cacheExpired {
 		return true, nil
 	}
@@ -93,11 +99,11 @@ func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string
 	}
 	for _, sub := range customer.Subscriptions.Data {
 		if sub.Plan.Product.ID == productID {
-			AddUserToCache(existingStripeCustomerID, sub.Status == stripe.SubscriptionStatusActive)
+			AddUserToCache(existingStripeCustomerID, productID, sub.Status == stripe.SubscriptionStatusActive)
 			return sub.Status == stripe.SubscriptionStatusActive, nil
 		}
 	}
-	AddUserToCache(existingStripeCustomerID, false)
+	AddUserToCache(existingStripeCustomerID, productID, false)
 	return false, nil
 }
 
@@ -356,13 +362,13 @@ func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool,
 		}
 		// check if the field is a system field
 		for _, sysField := range conf.MutableFields.System {
-			if mutation.Field == sysField {
+			if mutation.Field == sysField.Field {
 				return false, nil
 			}
 			// check if regexp is defined and matches
 			fieldRegExpMatch := false
-			if sysField != "" {
-				fieldRegExpMatch, err = regexp.Match(sysField, []byte(mutation.Field))
+			if sysField.FieldRegExp != "" {
+				fieldRegExpMatch, err = regexp.Match(sysField.FieldRegExp, []byte(mutation.Field))
 				if err != nil {
 					log.Printf("regexp err, sys field %v: %v", mutation.Field, err.Error())
 				}
@@ -374,13 +380,13 @@ func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool,
 
 		// check if the field is a user-only field
 		for _, userField := range conf.MutableFields.User {
-			if mutation.Field == userField {
+			if mutation.Field == userField.Field {
 				return true, nil
 			}
 			// check if regexp is defined and matches
 			fieldRegExpMatch := false
-			if userField != "" {
-				fieldRegExpMatch, err = regexp.Match(userField, []byte(mutation.Field))
+			if userField.FieldRegExp != "" {
+				fieldRegExpMatch, err = regexp.Match(userField.FieldRegExp, []byte(mutation.Field))
 				if err != nil {
 					log.Printf("regexp err, user field %v: %v", mutation.Field, err.Error())
 				}

@@ -51,8 +51,14 @@ type SubscriberField struct {
 	ProductID   string `yaml:"productId"`
 }
 
+type MutableField struct {
+	Field       string `yaml:"field"`
+	FieldRegExp string `yaml:"fieldRegExp"`
+	ProductID   string `yaml:"productId"`
+}
+
 type MutableFields struct {
-	System         []string          `yaml:"system"`
-	User           []string          `yaml:"user"`
+	System         []MutableField    `yaml:"system"`
+	User           []MutableField    `yaml:"user"`
 	SubscriberOnly []SubscriberField `yaml:"subscriberOnly"`
 }

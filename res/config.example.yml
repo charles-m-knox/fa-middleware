@@ -8,7 +8,7 @@ apps:
     fusionAuthPublicHost: http://localhost:9011
     fusionAuthAPIKey: OCnxf7Vf40WzZM_qg1ut1-Oy-gFaQsriypp4MLRzaDCyZ96kXKlibk5x
     fusionAuthAppID: 39624626-b0b0-46d6-9902-3967418ee1c5
-    fusionAuthOauthRedirectURL: http://localhost:8080/auth/oauth-cb
+    fusionAuthOauthRedirectURL: http://localhost:8080/mw/oauth-cb
     fusionAuthOauthClientID: 39624626-b0b0-46d6-9902-3967418ee1c5
     fusionAuthOauthClientSecret: JJ_WwJXr7o9AFuQ29mZQEfsxCXdbQn0FIbVjBiMtJH4
     fusionAuthTenantID: e4fdaffa-6177-3449-3517-f7b8c94baf8d
@@ -36,8 +36,9 @@ apps:
     mutableFields:
       system: [] # TBD - currently the system can write any field
       user:
-        - saved_accounts
-        - saved_strategies
+        - field: saved_accounts
+        - field: saved_strategies
+          fieldRegExp: $saved_strategies_.*$
       subscriberOnly:
         - field: saved_results
           fieldRegExp: ^saved_results.*$

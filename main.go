@@ -3,7 +3,7 @@ package main
 import (
 	"fa-middleware/auth"
 	"fa-middleware/config"
-	"fa-middleware/htmltemplates"
+	"fa-middleware/models"
 	"fa-middleware/payments"
 	"fa-middleware/routes"
 
@@ -88,48 +88,16 @@ func main() {
 
 	// start up the api server
 	r := gin.Default()
-	r.GET("/ping", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.GET("/mw/ping", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		c.JSON(200, gin.H{"message": "pong"})
 	})
-	r.GET("/assets/:file", func(c *gin.Context) {
-		fileName, ok := c.Params.Get("file")
-		log.Printf("/assets/t/: %v", fileName)
-		if !ok {
-			c.Data(404, "text/plain", []byte("not found"))
-			return
-		}
-		c.File(fmt.Sprintf("assets/%v", fileName))
-	})
-	r.GET("/pages/t/:file", func(c *gin.Context) {
-		fileName, ok := c.Params.Get("file")
-		if !ok {
-			c.Data(404, "text/plain", []byte("not found"))
-			return
-		}
-		app, ok := conf.GetConfigForDomain(c.Request.Host)
-		if !ok {
-			c.Data(404, "text/plain", []byte("not found"))
-			return
-		}
-		user, err := routes.GetUserFromGin(c, app) // will set the gin response if there's an error
-		if err != nil {
-			return
-		}
-		htmlstr, err := htmltemplates.GetTemplateByName(app, user, fileName)
-		if err != nil {
-			log.Printf("template failure for file %v: %v", fileName, err.Error())
-			c.Data(404, "text/plain", []byte("not found"))
-			return
-		}
-		c.Data(200, "text/html", []byte(htmlstr))
-	})
-	r.OPTIONS("/api/create-checkout-session", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/create-checkout-session", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -137,8 +105,8 @@ func main() {
 		c.Header("Access-Control-Allow-Methods", "OPTIONS, POST")
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.POST("/api/create-checkout-session", func(c *gin.Context) {
-		app, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.POST("/mw/create-checkout-session", func(c *gin.Context) {
+		app, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -155,16 +123,18 @@ func main() {
 			return
 		}
 	})
-	r.OPTIONS("/auth/substatus", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/substatus", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.GET("/api/substatus", func(c *gin.Context) {
-		app, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.GET("/mw/substatus", func(c *gin.Context) {
+		// alllows a logged-in user to check to see if they are subscribed
+		// to a product
+		app, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -192,48 +162,60 @@ func main() {
 		}
 		c.Data(200, "text/plain", []byte(fmt.Sprintf("%v", subscribed)))
 	})
-	// r.GET("/pages/makepayment", func(c *gin.Context) {
-	// 	app, ok := conf.GetConfigForDomain(c.Request.Host)
-	// 	if !ok {
-	// 		c.Data(404, "text/plain", []byte("not found"))
-	// 		return
-	// 	}
-	// 	htmlstr, err := htmltemplates.GetPaymentTemplate(app)
-	// 	if err != nil {
-	// 		log.Printf("error getting template: %v", err.Error())
-	// 		c.Data(500, "text/plain", []byte("server error"))
-	// 		return
-	// 	}
-	// 	c.Data(200, "text/html", []byte(htmlstr))
-	// })
-	// r.GET("/pages/welcome", func(c *gin.Context) {
-	// 	app, ok := conf.GetConfigForDomain(c.Request.Host)
-	// 	if !ok {
-	// 		c.Data(404, "text/plain", []byte("not found"))
-	// 	}
-	// 	routes.LoggedIn(c, app, app.FusionAuthClient)
-	// })
-	r.OPTIONS("/auth/login", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/private/substatus", func(c *gin.Context) {
+		c.Data(200, "text/plain", []byte("OK"))
+	})
+	r.POST("/mw/private/substatus", func(c *gin.Context) {
+		// enables other api's to check if a user is subscribed
+		postMutationBody := models.PostMutationBody{} // "value" will hold the product id
+		err := c.Bind(&postMutationBody)
+		if err != nil {
+			c.Data(404, "text/plain", []byte("not found"))
+			return
+		}
+		if postMutationBody.JWT == "" ||
+			postMutationBody.Key == "" ||
+			postMutationBody.Domain == "" ||
+			postMutationBody.Value == "" {
+			c.Data(400, "text/plain", []byte("not all required fields were specified for substatus"))
+			return
+		}
+		for _, app := range conf.Applications {
+			if postMutationBody.Domain == app.Domain && postMutationBody.Key == app.MutationKey {
+				// get the jwt now
+				user, err := auth.GetUserByJWT(app, postMutationBody.JWT)
+				if err != nil {
+					c.Data(400, "text/plain", []byte("jwt doesn't correspond to any user"))
+					return
+				}
+
+				// check if the user is subscribed now
+				result, err := payments.IsUserSubscribed(app, user, postMutationBody.Value)
+				if err != nil {
+					log.Printf(
+						"failed to check if user is subscribed to product %v: %v",
+						postMutationBody.Value,
+						err.Error(),
+					)
+					c.Data(400, "text/plain", []byte("failed to check if user is subscribed"))
+					return
+				}
+				c.Data(200, "text/plain", []byte(fmt.Sprintf("%v", result)))
+				return
+			}
+		}
+		c.Data(401, "text/plain", []byte("unauthorized"))
+	})
+	r.OPTIONS("/mw/login", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.GET("/auth/login", func(c *gin.Context) {
-		log.Printf("login: %v", c.Request.Header)
-		origin := c.Request.Header.Get("Origin")
-		if origin == "" {
-			referer := c.Request.Header.Get("Referer")
-			if referer == "" {
-				c.Data(404, "text/plain", []byte("not found"))
-				return
-			}
-			origin = referer
-		}
-		log.Printf("origin: %v", origin)
-		app, ok := conf.GetConfigForOrigin(origin)
+	r.GET("/mw/login", func(c *gin.Context) {
+		app, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -255,31 +237,24 @@ func main() {
 		// user is not logged in, so redirect
 		c.Redirect(301, app.AuthCodeURL)
 	})
-	r.OPTIONS("/auth/loggedin", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/loggedin", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.GET("/auth/loggedin", func(c *gin.Context) {
-		app, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.GET("/mw/loggedin", func(c *gin.Context) {
+		app, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		routes.LoggedIn(c, app, app.FusionAuthClient)
 	})
-	// r.GET("/api/currentuser/email", func(c *gin.Context) {
-	// 	app, ok := conf.GetConfigForDomain(c.Request.Host)
-	// 	if !ok {
-	// 		c.Data(404, "text/plain", []byte("not found"))
-	// 	}
-	// 	routes.GetAPICurrentUserEmail(c, app, app.FusionAuthClient)
-	// })
-	r.OPTIONS("/api/mutate", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/mutate", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -288,8 +263,8 @@ func main() {
 		c.Header("Access-Control-Allow-Headers", "X-PINGOTHER, content-type")
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.POST("/api/mutate", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.POST("/mw/mutate", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
@@ -298,29 +273,29 @@ func main() {
 		c.Header("Access-Control-Allow-Headers", "X-PINGOTHER, content-type")
 		routes.PostMutation(c, conf)
 	})
-	r.OPTIONS("/api/products", func(c *gin.Context) {
-		_, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.OPTIONS("/mw/products", func(c *gin.Context) {
+		_, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		c.Data(200, "text/plain", []byte("OK"))
 	})
-	r.GET("/api/products", func(c *gin.Context) {
-		app, _, ok := routes.GetConfigViaRouteOrigin(c, conf)
+	r.GET("/mw/products", func(c *gin.Context) {
+		app, ok := routes.GetConfigViaRouteOrigin(c, conf)
 		if !ok {
 			c.Data(404, "text/plain", []byte("not found"))
 			return
 		}
 		products, err := payments.GetProducts(app)
 		if err != nil {
-			log.Printf("/api/products failure: %v", err.Error())
+			log.Printf("/mw/products failure: %v", err.Error())
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
 		c.JSON(200, products)
 	})
-	r.GET("/auth/oauth-cb/:appId", func(c *gin.Context) {
+	r.GET("/mw/oauth-cb/:appId", func(c *gin.Context) {
 		appID := c.Params.ByName("appId")
 		if appID == "" {
 			c.Data(404, "text/plain", []byte("not found"))

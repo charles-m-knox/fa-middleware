@@ -6,9 +6,11 @@ import (
 	"fa-middleware/models"
 	"fa-middleware/payments"
 	"fa-middleware/userdata"
+	"strings"
 
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"log"
@@ -21,19 +23,30 @@ import (
 // cookies to work when requests are made via the web browser, as well as
 // automatically retrieving the app config that corresponds to the request
 // origin
-func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app config.Config, origin string, success bool) {
-	origin = c.Request.Header.Get("Origin")
-	if origin == "" {
-		return app, origin, false
+func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app config.Config, success bool) {
+	originHeader := c.Request.Header.Get("Origin")
+	if originHeader == "" {
+		referer := c.Request.Header.Get("Referer")
+		if referer == "" {
+			c.Data(404, "text/plain", []byte("not found"))
+			return
+		}
+		originHeader = referer
 	}
+	parsedURL, err := url.Parse(originHeader)
+	if err != nil {
+		c.Data(404, "text/plain", []byte("not found"))
+		return
+	}
+	origin := parsedURL.Host
 	log.Printf("origin: %v", origin)
 	app, ok := conf.GetConfigForOrigin(origin)
 	if !ok {
-		return app, origin, false
+		return app, false
 	}
-	c.Header("Access-Control-Allow-Origin", origin)
+	c.Header("Access-Control-Allow-Origin", app.FullDomainURL)
 	c.Header("Access-Control-Allow-Credentials", "true")
-	return app, origin, true
+	return app, true
 }
 
 // GetUserFromGin extracts the user via the JWT HttpOnly cookie and will
@@ -100,20 +113,12 @@ func LoggedIn(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClien
 		return
 	}
 
+	loggedInResponse.LoggedIn = true
 	loggedInResponse.UserID = user.Id
 	loggedInResponse.UserEmail = user.Email
 	loggedInResponse.UserFullName = user.FullName
 
 	c.JSON(200, loggedInResponse)
-
-	// render the loggedin.html template
-	// htmlstr, err := htmltemplates.GetLoggedInTemplate(user)
-	// if err != nil {
-	// 	log.Printf("error getting template: %v", err.Error())
-	// 	c.Data(500, "text/plain", []byte("server error!"))
-	// 	return
-	// }
-	// c.Data(200, "text/html", []byte(htmlstr))
 }
 
 func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient, codeVerif string) {
@@ -202,66 +207,6 @@ func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuth
 	c.Redirect(301, conf.AuthCallbackRedirectURL)
 }
 
-func GetAuthLogout(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
-	cookies := c.Request.Cookies()
-	jwt := ""
-	for _, cookie := range cookies {
-		if cookie.Name == conf.JWTCookieName {
-			jwt = cookie.Value
-			break
-		}
-	}
-
-	if jwt == "" {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	// get the current user
-	u, errs, err := fa.RetrieveUserUsingJWT(jwt)
-	if err != nil {
-		log.Printf("currentuser/email: %v", err.Error())
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-	if errs != nil {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	c.Data(200, "text/plain", []byte(u.User.Email))
-}
-
-func GetAPICurrentUserEmail(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
-	cookies := c.Request.Cookies()
-	jwt := ""
-	for _, cookie := range cookies {
-		if cookie.Name == conf.JWTCookieName {
-			jwt = cookie.Value
-			break
-		}
-	}
-
-	if jwt == "" {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	// get the current user
-	u, errs, err := fa.RetrieveUserUsingJWT(jwt)
-	if err != nil {
-		log.Printf("currentuser/email: %v", err.Error())
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-	if errs != nil {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	c.Data(200, "text/plain", []byte(u.User.Email))
-}
-
 // PostMutation allows an external api to arbitrarily mutate
 // user data in the postgresdb for a user, assuming they are authorized.
 // requires a few things:
@@ -283,7 +228,7 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 	// TODO: allow for a passlist of domain values so that requests
 	// can only come from other approved locations
 	// app, ok := conf.GetConfigForDomain(c.Request.Host) // old
-	app, _, ok := GetConfigViaRouteOrigin(c, conf)
+	app, ok := GetConfigViaRouteOrigin(c, conf)
 	if !ok {
 		log.Printf(
 			"post mutation: didn't find domain %v, trying mutation body",
@@ -295,21 +240,6 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 			return
 		}
 	}
-
-	// need to extract the HttpOnly cookie because it won't be included in the request
-	// cookies := c.Request.Cookies()
-	// mutation.JWT = ""
-	// for _, cookie := range cookies {
-	// 	if cookie.Name == app.JWTCookieName {
-	// 		mutation.JWT = cookie.Value
-	// 		break
-	// 	}
-	// }
-
-	// if mutation.JWT == "" {
-	// 	c.Data(403, "text/plain", []byte("unauthorized"))
-	// 	return
-	// }
 
 	mutation.JWT = GetJWTFromGin(c, app)
 
@@ -373,11 +303,20 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 			c.Data(400, "text/plain", []byte("bad request"))
 			return
 		}
+		if strings.HasSuffix(mutation.Field, "%") {
+			results, err := userdata.GetQueriedFieldsForUser(app, user, mutation.Field)
+			if err != nil {
+				log.Printf("failed to read multiple fields of user data on mutation: %v", err.Error())
+				c.Data(500, "text/plain", []byte("server error"))
+				return
+			}
+			c.JSON(200, results)
+		}
 		// get the data via postgres
 		// err = userdata.GetUserData(app, &userData)
 		value, err := userdata.GetValueForUser(app, user, mutation.Field)
 		if err != nil {
-			log.Printf("failed to write user data on mutation: %v", err.Error())
+			log.Printf("failed to read user data on mutation: %v", err.Error())
 			c.Data(500, "text/plain", []byte("server error"))
 			return
 		}
@@ -400,64 +339,3 @@ func PostMutation(c *gin.Context, conf config.CompleteConfig) {
 
 	c.Data(400, "text/plain", []byte("bad request"))
 }
-
-/*
-func GetUserData(c *gin.Context, conf config.CompleteConfig, field string) {
-	field, ok := c.Params.Get("f")
-	if !ok {
-		c.Data(400, "text/plain", []byte("bad request"))
-		return
-	}
-
-	// allows for requests to come from either this API directly
-	// or from some other service
-	// TODO: allow for a passlist of c.Request.Host values so that requests
-	// can only come from other approved locations
-	app, ok := conf.GetConfigForDomain(c.Request.Host)
-	if !ok {
-		log.Printf(
-			"post mutation: didn't find domain %v, trying mutation body",
-			c.Request.Host,
-		)
-		// app, ok = conf.GetConfigForDomain(mutation.Domain)
-		// if !ok {
-		// 	c.Data(404, "text/plain", []byte("not found"))
-		// 	return
-		// }
-	}
-
-	// talk to fusionauth to validate the jwt
-	user, err := auth.GetUserByJWT(app, mutation.JWT)
-	if err != nil {
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	// validate that the user's tenant id matches this app's tenant id
-	if user.TenantId != app.FusionAuthTenantID {
-		log.Printf(
-			"post mutation: user tenant id %v did not match app tenant id %v",
-			user.TenantId,
-			app.FusionAuthTenantID,
-		)
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	userData := models.UserData{
-		UserID:   user.Id,
-		AppID:    app.FusionAuthAppID,
-		TenantID: user.TenantId,
-		Field:    mutation.Field,
-	}
-
-	// get the data via postgres
-	err = userdata.GetUserData(app, &userData)
-	if err != nil {
-		log.Printf("failed to get user data for field: %v", err.Error())
-		c.Data(500, "text/plain", []byte("server error"))
-	}
-
-	c.Data(200, "text/plain", []byte(userData.Value))
-}
-*/

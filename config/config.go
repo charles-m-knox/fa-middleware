@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strings"
 
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	viper "github.com/spf13/viper"
@@ -132,12 +131,17 @@ func (conf *CompleteConfig) GetConfigForDomain(domain string) (Config, bool) {
 
 func (conf *CompleteConfig) GetConfigForOrigin(origin string) (Config, bool) {
 	// trim the trailing slash from the referer
-	orig := origin
-	if strings.HasSuffix(origin, "/") {
-		orig = origin[:len(origin)-len("/")]
-	}
+	// orig := origin
+	// if strings.HasSuffix(origin, "/") {
+	// 	orig = origin[:len(origin)-len("/")]
+	// }
+	// orig, err := url.Parse(origin)
+	// if err != nil {
+	// 	log.Printf("failed to parse origin url: %v", err.Error())
+	// 	return Config{}, false
+	// }
 	for _, app := range conf.Applications {
-		if app.FullDomainURL == orig {
+		if app.Domain == origin {
 			return app, true
 		}
 	}
