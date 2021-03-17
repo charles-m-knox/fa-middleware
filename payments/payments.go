@@ -4,14 +4,11 @@ import (
 	"fa-middleware/auth"
 	"fa-middleware/config"
 	"fa-middleware/models"
-	"fa-middleware/userdata"
-	"regexp"
-	"time"
-
-	"log"
-	"strings"
 
 	"fmt"
+	"log"
+	"strings"
+	"time"
 
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 	"github.com/gin-gonic/gin"
@@ -19,6 +16,13 @@ import (
 	"github.com/stripe/stripe-go/v72/client"
 )
 
+const (
+	CacheExpirationSeconds = 60
+	StripeCustomerIDField  = "stripeCustomerID"
+)
+
+// CachedUser is the struct that is responsible for what data gets associated
+// with Stripe subscription check result caches.
 type CachedUser struct {
 	CacheTime  time.Time
 	Subscribed bool
@@ -27,32 +31,52 @@ type CachedUser struct {
 var SubscribedUserCache map[string]CachedUser
 
 // InitializeSubscribedUserCache should be called once at the beginning of
-// the program
+// the program so that the cache map can be initialized.
 func InitializeSubscribedUserCache() {
 	SubscribedUserCache = make(map[string]CachedUser)
 }
 
+// getCustomerProductCacheStr simply builds a value that pairs
+// a Stripe customer ID with the product ID as a string. This value
+// is a string that gets put into the SubscribedUserCache as the key,
+// and the value is a CachedUser (struct).
+//
+// Example: cus_J83zKLOHeJS4kC_prod_J7bo97LpdukduC
 func getCustomerProductCacheStr(stripeCustomerID string, stripeProductID string) string {
 	return fmt.Sprintf("%v_%v", stripeCustomerID, stripeProductID)
 }
 
+// IsUserCacheExpired checks if the cached value (from checking the Stripe API
+// to see if a customer ID has a subscription to a specific product ID) is
+// not expired, based on whether enough time has elapsed since the value was
+// cached.
+//
+// See CacheExpirationSeconds
+//
+// TODO: Configurable CacheExpirationSeconds instead of hardcode
 func (cachedUser *CachedUser) IsUserCacheExpired() bool {
-	return time.Now().After(cachedUser.CacheTime.Add(time.Second * 30))
+	return time.Now().After(
+		cachedUser.CacheTime.Add(
+			time.Second * CacheExpirationSeconds,
+		),
+	)
 }
 
-func AddUserToCache(stripeCustomerID string, stripeProductID string, substate bool) {
-	cacheStr := getCustomerProductCacheStr(stripeCustomerID, stripeProductID)
+// AddUserToCache adds a Stripe customer & product check result to the
+// in-memory cache with the current time as the cache start time.
+func AddUserToCache(stripeCustID string, stripeProductID string, subState bool) {
+	cacheStr := getCustomerProductCacheStr(stripeCustID, stripeProductID)
 	SubscribedUserCache[cacheStr] = CachedUser{
 		CacheTime:  time.Now(),
-		Subscribed: substate,
+		Subscribed: subState,
 	}
 }
 
 // IsUserSubscribedCached checks if a user is subscribed via cache
-func IsUserSubscribedCached(stripeCustomerID string, stripeProductID string) (subbed bool, cacheExpired bool) {
+func IsUserSubscribedCached(stripeCustomerID string, stripeProductID string) (bool, bool) {
 	cacheStr := getCustomerProductCacheStr(stripeCustomerID, stripeProductID)
 	cachedUser, ok := SubscribedUserCache[cacheStr]
-	cacheExpired = cachedUser.IsUserCacheExpired()
+	cacheExpired := cachedUser.IsUserCacheExpired()
 	if !ok || cacheExpired {
 		// the user's cached value has expired, or the user has not yet been
 		// cached at all, so we need to hit the stripe API
@@ -65,71 +89,97 @@ func IsUserSubscribedCached(stripeCustomerID string, stripeProductID string) (su
 	return cachedUser.Subscribed, false
 }
 
-func IsUserSubscribed(conf config.Config, user fusionauth.User, productID string) (bool, error) {
+// IsUserSubscribed checks if a user is subscribed to a given Stripe productID
+// by first checking the in-memory cache, and if not, it will do an API call
+// to Stripe directly.
+//
+// Cached results can take around 5-40ms for a complete API
+// call, whereas a Stripe API call will take anywhere from 200-1000ms.
+//
+// TODO: The default expiration time for a cached entry is currently hardcoded
+func IsUserSubscribed(conf config.App, user fusionauth.User, productID string) (bool, error) {
 	sc := &client.API{}
-	sc.Init(conf.StripeSecretKey, nil)
+	sc.Init(conf.Stripe.SecretKey, nil)
 
-	existingStripeCustomerID, err := userdata.GetValueForUser(conf, user, "stripe_customer_id")
-	if err != nil {
-		return false, fmt.Errorf("failed to get customer id from local db: %v", err.Error())
+	existingID := user.Data[StripeCustomerIDField].(string)
+	if existingID == "" {
+		log.Printf("user %v is has no customer id", user.Id)
+		return false, nil
 	}
 
-	subscribedViaCache, cacheExpired := IsUserSubscribedCached(existingStripeCustomerID, productID)
-	if subscribedViaCache && !cacheExpired {
-		return true, nil
+	cachedSub, cacheExpired := IsUserSubscribedCached(existingID, productID)
+	if !cacheExpired {
+		return cachedSub, nil
 	}
 
 	// query stripe to find the user
 	params := &stripe.CustomerParams{}
 	params.AddExpand("subscriptions")
-	customer, err := sc.Customers.Get(existingStripeCustomerID, params)
+	customer, err := sc.Customers.Get(existingID, params)
 	if err != nil {
 		return false, fmt.Errorf(
 			"failed to get customer id %v: %v",
-			existingStripeCustomerID,
+			existingID,
 			err.Error(),
 		)
 	}
-	if customer.ID != existingStripeCustomerID {
+	if customer.ID != existingID {
 		return false, fmt.Errorf(
 			"customer id %v mismatched stripe customer id %v",
-			existingStripeCustomerID,
+			existingID,
 			customer.ID,
 		)
 	}
 	for _, sub := range customer.Subscriptions.Data {
 		if sub.Plan.Product.ID == productID {
-			AddUserToCache(existingStripeCustomerID, productID, sub.Status == stripe.SubscriptionStatusActive)
-			return sub.Status == stripe.SubscriptionStatusActive, nil
+			isActive := sub.Status == stripe.SubscriptionStatusActive
+			AddUserToCache(
+				existingID,
+				productID,
+				isActive,
+			)
+			return isActive, nil
 		}
 	}
-	AddUserToCache(existingStripeCustomerID, productID, false)
+	AddUserToCache(existingID, productID, false)
 	return false, nil
 }
 
-func PropagateUserToStripe(conf config.Config, user fusionauth.User) (customerID string, err error) {
+// PropagateUserToStripe pushes a user to Stripe via the Stripe API, this is
+// important because it returns a customerID that is our only correlation
+// between Stripe and FusionAuth users. Email is the second most reliable
+// correlation, but that can change as well.
+//
+// TODO: Set user ID and other metadata after propagation to Stripe
+func PropagateUserToStripe(app config.App, user fusionauth.User) (custID string, err error) {
 	sc := &client.API{}
-	sc.Init(conf.StripeSecretKey, nil)
+	sc.Init(app.Stripe.SecretKey, nil)
 
-	existingStripeCustomerID, err := userdata.GetValueForUser(conf, user, "stripe_customer_id")
-	if err != nil {
-		return "", fmt.Errorf("failed to get customer id from local db: %v", err.Error())
+	existingID := user.Data[StripeCustomerIDField]
+	if existingID != nil && existingID.(string) != "" {
+		return existingID.(string), nil
 	}
 
 	// customer probably doesn't exist, so let's try to create a new one in stripe
-	if existingStripeCustomerID == "" {
-		customer, err := sc.Customers.New(&stripe.CustomerParams{
-			Email: &user.Email,
-			Name:  &user.FullName,
-			Phone: &user.MobilePhone,
-		})
+	if existingID == nil || existingID.(string) == "" {
+		log.Printf(
+			"user %v customer id is not in fa user data; setting up next...",
+			user.Id,
+		)
+		customer, err := sc.Customers.New(
+			&stripe.CustomerParams{
+				Email: &user.Email,
+				Name:  &user.FullName,
+				Phone: &user.MobilePhone,
+			},
+		)
 		if err != nil {
 			return "", fmt.Errorf("failed to create new customer: %v", err.Error())
 		}
 
-		// push the customer's ID to database immediately!
-		log.Printf("new customer id: %v", customer.ID)
-		err = userdata.SetValueForUser(conf, user, "stripe_customer_id", customer.ID)
+		// push the customer's ID to our db immediately!
+		log.Printf("new customer id %v for user %v", customer.ID, user.Id)
+		err = auth.SetUserData(app, user, "stripeCustomerID", customer.ID)
 		if err != nil {
 			return customer.ID, fmt.Errorf(
 				"failed to push customer id %v to database: %v",
@@ -143,15 +193,19 @@ func PropagateUserToStripe(conf config.Config, user fusionauth.User) (customerID
 
 	// now the customer DOES exist already, so we don't have to propagate them to Stripe
 	// TODO: validate that the customer's email matches stripe email, and update if needed
-	return customerID, nil
+	return custID, nil
 }
 
+// GetProducts returns a list of products that are configured in one of your
+// apps, with the intention of presenting the data to the frontend.
+//
 // https://stripe.com/docs/api/products/retrieve
-func GetProducts(conf config.Config) (products []models.ProductSummary, err error) {
+func GetProducts(app config.App) (products []models.ProductSummary, err error) {
 	sc := &client.API{}
-	sc.Init(conf.StripeSecretKey, nil)
+	sc.Init(app.Stripe.SecretKey, nil)
 	params := &stripe.ProductParams{}
-	for _, stripeProduct := range conf.StripeProducts {
+
+	for _, stripeProduct := range app.Stripe.Products {
 		product, err := sc.Products.Get(stripeProduct.ProductID, params)
 		if err != nil {
 			return products, fmt.Errorf(
@@ -253,23 +307,31 @@ func GetProducts(conf config.Config) (products []models.ProductSummary, err erro
 		})
 	}
 
-	conf.StripeProductsFromAPI = products
+	app.StripeProductsFromAPI = products
 
 	return products, nil
 }
 
-type CreateCheckoutSessionResponse struct {
-	SessionID string `json:"id"`
-}
-
+// CreateCheckoutSession uses the suggested code pattern from the Stripe API
+// documentation - if there is an error, it will not set any gin response,
+// but if it succeeds, it will set a 200 response with JSON data containing
+// the Stripe session ID.
+//
+// Reference:
+//
 // https://stripe.com/docs/api/checkout/sessions/create
-// query params:
-// - ids=csv price IDs from stripe
-// - m=either "s" or "p" for subscription or one-time payment (no quotes)
+//
+// Query params:
+//
+// - ids: a CSV list of price IDs, real values from Stripe
+//
+// - m: either "s" or "p" for subscription or one-time payment (no quotes)
+//
 // TODO: if no ids are specified, just put in all of them? or choose a default?
-func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.User) error {
+func CreateCheckoutSession(c *gin.Context, conf config.App, user fusionauth.User) error {
 	sc := &client.API{}
-	sc.Init(conf.StripeSecretKey, nil)
+	sc.Init(conf.Stripe.SecretKey, nil)
+
 	// retrieve the products from stripe
 	products, err := GetProducts(conf)
 	if err != nil {
@@ -278,17 +340,15 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.U
 			err.Error(),
 		)
 	}
+
 	params := &stripe.CheckoutSessionParams{
 		PaymentMethodTypes: stripe.StringSlice([]string{
 			"card",
 		}),
 		CustomerEmail: &user.Email,
 		LineItems:     []*stripe.CheckoutSessionLineItemParams{},
-		// Mode:       stripe.String(string(stripe.CheckoutSessionModePayment)),
-		// SuccessURL: stripe.String(conf.FullDomainURL + "/pages/t/stripesuccess.html"),
-		SuccessURL: stripe.String(conf.StripePaymentSuccessURL),
-		// CancelURL:  stripe.String(conf.FullDomainURL + "/pages/t/stripecancel.html"),
-		CancelURL: stripe.String(conf.StripePaymentCancelURL),
+		SuccessURL:    stripe.String(conf.Stripe.PaymentSuccessURL),
+		CancelURL:     stripe.String(conf.Stripe.PaymentCancelURL),
 	}
 
 	// populate the checkout with the provided price ids, if they exist
@@ -297,11 +357,14 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.U
 	csvPriceIDs := c.Query("ids")
 	priceIDs := strings.Split(csvPriceIDs, ",")
 	if csvPriceIDs == "" {
-		for _, stripeProduct := range conf.StripeProducts {
+		for _, stripeProduct := range conf.Stripe.Products {
 			priceIDs = append(priceIDs, stripeProduct.PriceIDs...)
 		}
 	}
-	priceMode := c.Query("m") // must be either "s" for subscription or "p" for one-type payment
+
+	// priceMode must be either "s" for subscription or "p" for one-type payment
+	priceMode := c.Query("m")
+
 	switch priceMode {
 	case "p":
 		params.Mode = stripe.String(string(stripe.CheckoutSessionModePayment))
@@ -310,6 +373,7 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.U
 	default:
 		return fmt.Errorf("priceMode query parameter was not set to either 'p' or 's'")
 	}
+
 	for _, product := range products {
 		for _, price := range product.Prices {
 			for _, queriedPriceID := range priceIDs {
@@ -324,104 +388,28 @@ func CreateCheckoutSession(c *gin.Context, conf config.Config, user fusionauth.U
 					if priceMode == "m" && price.RecurringInterval != "" {
 						break
 					}
-					params.LineItems = append(params.LineItems, &stripe.CheckoutSessionLineItemParams{
-						Price:    stripe.String(queriedPriceID),
-						Quantity: stripe.Int64(1),
-					})
+					params.LineItems = append(
+						params.LineItems,
+						&stripe.CheckoutSessionLineItemParams{
+							Price:    stripe.String(queriedPriceID),
+							Quantity: stripe.Int64(1),
+						},
+					)
 					break
 				}
 			}
 		}
 	}
 
-	// session, err := session.New(params)
 	session, err := sc.CheckoutSessions.New(params)
 	if err != nil {
-		return fmt.Errorf("session.New: %v", err.Error())
+		return fmt.Errorf("session.new: %v", err.Error())
 	}
 
-	data := CreateCheckoutSessionResponse{
+	data := models.CreateCheckoutSessionResponse{
 		SessionID: session.ID,
 	}
 
 	c.JSON(200, data)
 	return nil
-}
-
-// IsFieldMutable tests if the desired field can be changed according to whether
-// or not the mutation request has sufficient privileges - system, user, subscriber.
-func IsFieldMutable(conf config.Config, mutation models.PostMutationBody) (bool, error) {
-	if mutation.Key == conf.MutationKey {
-		return true, nil
-	}
-
-	if mutation.JWT != "" {
-		user, err := auth.GetUserByJWT(conf, mutation.JWT)
-		if err != nil {
-			return false, fmt.Errorf("failed to check user jwt during mutability check: %v", err.Error())
-		}
-		// check if the field is a system field
-		for _, sysField := range conf.MutableFields.System {
-			if mutation.Field == sysField.Field {
-				return false, nil
-			}
-			// check if regexp is defined and matches
-			fieldRegExpMatch := false
-			if sysField.FieldRegExp != "" {
-				fieldRegExpMatch, err = regexp.Match(sysField.FieldRegExp, []byte(mutation.Field))
-				if err != nil {
-					log.Printf("regexp err, sys field %v: %v", mutation.Field, err.Error())
-				}
-			}
-			if fieldRegExpMatch {
-				return true, nil
-			}
-		}
-
-		// check if the field is a user-only field
-		for _, userField := range conf.MutableFields.User {
-			if mutation.Field == userField.Field {
-				return true, nil
-			}
-			// check if regexp is defined and matches
-			fieldRegExpMatch := false
-			if userField.FieldRegExp != "" {
-				fieldRegExpMatch, err = regexp.Match(userField.FieldRegExp, []byte(mutation.Field))
-				if err != nil {
-					log.Printf("regexp err, user field %v: %v", mutation.Field, err.Error())
-				}
-			}
-			if fieldRegExpMatch {
-				return true, nil
-			}
-		}
-
-		// check if the field is a subscriber-only field
-		for _, subscriberField := range conf.MutableFields.SubscriberOnly {
-			// check if regexp is defined and matches
-			fieldRegExpMatch := false
-			if subscriberField.FieldRegExp != "" {
-				fieldRegExpMatch, err = regexp.Match(subscriberField.FieldRegExp, []byte(mutation.Field))
-				if err != nil {
-					log.Printf("regexp err, sub field %v: %v", mutation.Field, err.Error())
-				}
-			}
-			if mutation.Field == subscriberField.Field || fieldRegExpMatch {
-				// check if the user is a stripe subscriber
-				subbed, err := IsUserSubscribed(conf, user, subscriberField.ProductID)
-				if err != nil {
-					return false, fmt.Errorf(
-						"failed to check if user %v is subscribed to modify field %v for product id %v: %v",
-						user.Id,
-						mutation.Field,
-						subscriberField.ProductID,
-						err.Error(),
-					)
-				}
-				return subbed, nil
-			}
-		}
-	}
-
-	return false, nil
 }

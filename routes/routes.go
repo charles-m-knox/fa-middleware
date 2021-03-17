@@ -5,13 +5,10 @@ import (
 	"fa-middleware/config"
 	"fa-middleware/models"
 	"fa-middleware/payments"
-	"fa-middleware/userdata"
-	"strings"
 
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"log"
 
@@ -23,7 +20,7 @@ import (
 // cookies to work when requests are made via the web browser, as well as
 // automatically retrieving the app config that corresponds to the request
 // origin
-func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app config.Config, success bool) {
+func GetConfigViaRouteOrigin(c *gin.Context, conf config.Config) (app config.App, success bool) {
 	originHeader := c.Request.Header.Get("Origin")
 	if originHeader == "" {
 		referer := c.Request.Header.Get("Referer")
@@ -40,7 +37,7 @@ func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app co
 	}
 	origin := parsedURL.Host
 	log.Printf("origin: %v", origin)
-	app, ok := conf.GetConfigForOrigin(origin)
+	app, ok := conf.GetAppByOrigin(origin)
 	if !ok {
 		return app, false
 	}
@@ -51,11 +48,11 @@ func GetConfigViaRouteOrigin(c *gin.Context, conf config.CompleteConfig) (app co
 
 // GetUserFromGin extracts the user via the JWT HttpOnly cookie and will
 // set the gin response if there's an error
-func GetUserFromGin(c *gin.Context, conf config.Config) (user fusionauth.User, err error) {
+func GetUserFromGin(c *gin.Context, app config.App) (user fusionauth.User, err error) {
 	cookies := c.Request.Cookies()
 	jwt := ""
 	for _, cookie := range cookies {
-		if cookie.Name == conf.JWTCookieName {
+		if cookie.Name == app.JWT.CookieName {
 			jwt = cookie.Value
 			break
 		}
@@ -67,7 +64,7 @@ func GetUserFromGin(c *gin.Context, conf config.Config) (user fusionauth.User, e
 	}
 
 	// check if the user has a valid jwt
-	user, err = auth.GetUserByJWT(conf, jwt)
+	user, err = auth.GetUserByJWT(app, jwt)
 	if err != nil {
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return user, fmt.Errorf("unauthorized")
@@ -76,53 +73,46 @@ func GetUserFromGin(c *gin.Context, conf config.Config) (user fusionauth.User, e
 	return user, nil
 }
 
-type LoggedInResponse struct {
-	LoggedIn     bool   `json:"loggedIn"`
-	UserID       string `json:"userId"`
-	UserEmail    string `json:"userEmail"`
-	UserFullName string `json:"userFullName"`
-}
-
-func GetJWTFromGin(c *gin.Context, conf config.Config) string {
+// GetJWTFromGin allows for quick retrieval of a JWT HttpOnly cookie from
+// a Gin context
+func GetJWTFromGin(c *gin.Context, app config.App) string {
 	cookies := c.Request.Cookies()
 	for _, cookie := range cookies {
-		if cookie.Name == conf.JWTCookieName {
+		if cookie.Name == app.JWT.CookieName {
 			return cookie.Value
 		}
 	}
-
 	return ""
 }
 
-// LoggedIn allows the frontend to quickly check if the user is logged in.
-func LoggedIn(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient) {
-	jwt := GetJWTFromGin(c, conf)
-	loggedInResponse := LoggedInResponse{}
+// LoggedIn allows the frontend to quickly check if the user is logged in
+func LoggedIn(c *gin.Context, app config.App, fa *fusionauth.FusionAuthClient) {
+	jwt := GetJWTFromGin(c, app)
+	resp := models.LoggedInResponse{}
 
 	if jwt == "" {
 		log.Printf("loggedin: empty jwt")
-		c.JSON(200, loggedInResponse)
+		c.JSON(200, resp)
 		return
 	}
 
 	// check if the user has a valid jwt
-	user, err := auth.GetUserByJWT(conf, jwt)
+	user, err := auth.GetUserByJWT(app, jwt)
 	if err != nil {
 		log.Printf("loggedin: couldn't get user")
-		c.JSON(200, loggedInResponse)
+		c.JSON(200, resp)
 		return
 	}
 
-	loggedInResponse.LoggedIn = true
-	loggedInResponse.UserID = user.Id
-	loggedInResponse.UserEmail = user.Email
-	loggedInResponse.UserFullName = user.FullName
+	resp.LoggedIn = true
+	resp.UserID = user.Id
+	resp.UserEmail = user.Email
+	resp.UserFullName = user.FullName
 
-	c.JSON(200, loggedInResponse)
+	c.JSON(200, resp)
 }
 
-func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuthClient, codeVerif string) {
-	// https://github.com/gin-gonic/examples/blob/master/basic/main.go
+func OauthCallback(c *gin.Context, app config.App, fa *fusionauth.FusionAuthClient) {
 	err := c.Request.ParseForm()
 	if err != nil {
 		log.Printf("oauth-callback failed to process form: %v", err.Error())
@@ -130,212 +120,59 @@ func OauthCallback(c *gin.Context, conf config.Config, fa *fusionauth.FusionAuth
 		return
 	}
 
-	receivedOauthState, ok := c.Request.Form["state"]
+	oastate, ok := c.Request.Form["state"]
 	if !ok {
 		log.Printf("login: no state")
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return
 	}
-	receivedOauthCode, ok := c.Request.Form["code"]
+	oacode, ok := c.Request.Form["code"]
 	if !ok {
 		log.Printf("login: no code")
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return
 	}
 
-	if len(receivedOauthState) != 1 || len(receivedOauthCode) != 1 {
+	if len(oastate) != 1 || len(oacode) != 1 {
 		log.Printf("login: didn't receive 1 state and 1 code")
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return
 	}
 
 	oauths := models.OauthState{
-		Code:     receivedOauthCode[0],
-		State:    receivedOauthState[0],
-		Verifier: codeVerif,
+		Code:     oacode[0],
+		State:    oastate[0],
+		Verifier: app.Oauth2Config.CodeVerif,
 	}
 
-	// log.Printf("post form array: %v", c.Request.Form)
-
-	user, jwt, err := auth.Login(conf, fa, oauths)
+	user, jwt, err := auth.Login(app, fa, oauths)
 	if err != nil {
 		log.Printf("err login: %v", err.Error())
 		c.Data(403, "text/plain", []byte("unauthorized"))
 		return
 	}
 
-	err = userdata.SetUserData(
-		conf,
-		models.UserData{
-			UserID:    user.Id,
-			TenantID:  conf.FusionAuthTenantID,
-			AppID:     conf.FusionAuthAppID,
-			Field:     "login",
-			Value:     "1",
-			UpdatedAt: time.Now().UnixNano() / 1000000,
-		},
-	)
-
-	if err != nil {
-		log.Printf("error setting user data: %v", err.Error())
-		c.Data(500, "text/plain", []byte("server error"))
-		return
-	}
-
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(
-		conf.JWTCookieName,
+		app.JWT.CookieName,
 		jwt,
-		conf.JWTCookieMaxAgeSeconds, // TODO: change this to a bigger value than 1 hour?
+		app.JWT.CookieMaxAgeSeconds,
 		"/",
-		conf.JWTCookieDomain,    // TODO: integrate with multi-tenancy?
-		conf.JWTCookieSetSecure, // TODO: use secure only
+		app.JWT.CookieDomain,
+		app.JWT.CookieSetSecure,
 		true,
 	)
 
-	_, err = payments.PropagateUserToStripe(conf, user)
+	_, err = payments.PropagateUserToStripe(app, user)
 	if err != nil {
 		log.Printf(
 			"failed to push user %v to stripe: %v",
 			user.Id,
 			err.Error(),
 		)
-		c.Redirect(301, conf.AuthCallbackRedirectURL)
+		c.Redirect(301, app.FusionAuth.AuthCallbackRedirectURL)
 		return
 	}
 
-	c.Redirect(301, conf.AuthCallbackRedirectURL)
-}
-
-// PostMutation allows an external api to arbitrarily mutate
-// user data in the postgresdb for a user, assuming they are authorized.
-// requires a few things:
-// - a jwt for the user
-// - the name of the field to modify in the db
-// - the value of the corresponding field to set in the db
-func PostMutation(c *gin.Context, conf config.CompleteConfig) {
-	var mutation models.PostMutationBody
-	err := c.Bind(&mutation)
-	if err != nil ||
-		mutation.Field == "" ||
-		mutation.Method == "" {
-		c.Data(400, "text/plain", []byte("bad request"))
-		return
-	}
-
-	// allows for requests to come from either this API directly
-	// or from some other service
-	// TODO: allow for a passlist of domain values so that requests
-	// can only come from other approved locations
-	// app, ok := conf.GetConfigForDomain(c.Request.Host) // old
-	app, ok := GetConfigViaRouteOrigin(c, conf)
-	if !ok {
-		log.Printf(
-			"post mutation: didn't find domain %v, trying mutation body",
-			c.Request.Host,
-		)
-		app, ok = conf.GetConfigForDomain(mutation.Domain)
-		if !ok {
-			c.Data(404, "text/plain", []byte("not found"))
-			return
-		}
-	}
-
-	mutation.JWT = GetJWTFromGin(c, app)
-
-	// talk to fusionauth to validate the jwt
-	user, err := auth.GetUserByJWT(app, mutation.JWT)
-	if err != nil {
-		log.Printf("unauthorized user mutation")
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	// validate that the user's tenant id matches this app's tenant id
-	if user.TenantId != app.FusionAuthTenantID {
-		log.Printf(
-			"post mutation: user tenant id %v did not match app tenant id %v",
-			user.TenantId,
-			app.FusionAuthTenantID,
-		)
-		c.Data(403, "text/plain", []byte("unauthorized"))
-		return
-	}
-
-	userData := models.UserData{
-		UserID:   user.Id,
-		AppID:    app.FusionAuthAppID,
-		TenantID: user.TenantId,
-		Field:    mutation.Field,
-		Value:    mutation.Value,
-	}
-
-	// check that the method is valid now, before checking if it's mutable,
-	// because the mutability check performs an API call to Stripe in some cases
-	// and can take time
-	if mutation.Method != "g" && mutation.Method != "s" {
-		c.Data(400, "text/plain", []byte("bad request"))
-		return
-	}
-
-	mutable, err := payments.IsFieldMutable(app, mutation)
-	if err != nil {
-		log.Printf(
-			"failed to check mutability for user id %v, field %v: %v",
-			user.Id,
-			mutation.Field,
-			err.Error(),
-		)
-		c.Data(500, "text/plain", []byte("server error"))
-		return
-	}
-
-	if !mutable {
-		log.Printf("field %v is not mutable by user %v", mutation.Field, user.Id)
-		c.Data(403, "text/plain", []byte("forbidden"))
-		return
-	}
-
-	switch mutation.Method {
-	case "g":
-		if userData.Value != "" {
-			log.Printf("post mutate get user data: value %v should be empty", userData.Value)
-			c.Data(400, "text/plain", []byte("bad request"))
-			return
-		}
-		if strings.HasSuffix(mutation.Field, "%") {
-			results, err := userdata.GetQueriedFieldsForUser(app, user, mutation.Field)
-			if err != nil {
-				log.Printf("failed to read multiple fields of user data on mutation: %v", err.Error())
-				c.Data(500, "text/plain", []byte("server error"))
-				return
-			}
-			c.JSON(200, results)
-		}
-		// get the data via postgres
-		// err = userdata.GetUserData(app, &userData)
-		value, err := userdata.GetValueForUser(app, user, mutation.Field)
-		if err != nil {
-			log.Printf("failed to read user data on mutation: %v", err.Error())
-			c.Data(500, "text/plain", []byte("server error"))
-			return
-		}
-		c.Data(200, "text/plain", []byte(value))
-		return
-	case "s":
-		// https://gobyexample.com/epoch
-		userData.UpdatedAt = time.Now().UnixNano() / 1000000
-		// write the data via postgres
-		// err = userdata.SetUserData(app, userData)
-		err := userdata.SetValueForUser(app, user, mutation.Field, mutation.Value)
-		if err != nil {
-			log.Printf("failed to write user data on mutation: %v", err.Error())
-			c.Data(500, "text/plain", []byte("server error"))
-			return
-		}
-		c.Data(200, "text/plain", []byte(fmt.Sprintf("%v", userData.UpdatedAt)))
-		return
-	}
-
-	c.Data(400, "text/plain", []byte("bad request"))
+	c.Redirect(301, app.FusionAuth.AuthCallbackRedirectURL)
 }

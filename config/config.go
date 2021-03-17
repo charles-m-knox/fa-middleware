@@ -2,12 +2,12 @@ package config
 
 import (
 	"fa-middleware/models"
+
 	"fmt"
 	"io/ioutil"
 	"os"
 
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
-	viper "github.com/spf13/viper"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v2"
 )
@@ -22,57 +22,63 @@ type GlobalConfig struct {
 	BindPortExternal int    `yaml:"bindPortExternal"`
 }
 
-type StripeProduct struct {
-	ProductID string   `yaml:"productId"`
-	PriceIDs  []string `yaml:"priceIds"`
+type FusionAuthConfig struct {
+	AuthCallbackRedirectURL string                       `yaml:"authCallbackRedirectURL"`
+	InternalHostURL         string                       `yaml:"internalHostUrl"` // "http://fusionauth:9011"
+	PublicHostURL           string                       `yaml:"publicHostUrl"`   // "http://localhost:9011"
+	APIKey                  string                       `yaml:"apiKey"`
+	AppID                   string                       `yaml:"appID"`
+	OauthRedirectURL        string                       `yaml:"oauthRedirectURL"`
+	OauthClientID           string                       `yaml:"oauthClientID"`
+	OauthClientSecret       string                       `yaml:"oauthClientSecret"`
+	TenantID                string                       `yaml:"tenantID"`
+	Client                  *fusionauth.FusionAuthClient // in-memory runtime instance of FusionAuth; is set automatically
+}
+
+type JWTConfig struct {
+	CookieDomain        string `yaml:"cookieDomain"`
+	CookieMaxAgeSeconds int    `yaml:"cookieMaxAgeSeconds"`
+	CookieSetSecure     bool   `yaml:"cookieSetSecure"` // sets the "secure" flag for the jwt cookie
+	CookieName          string `yaml:"cookieName"`      // sets the "secure" flag for the jwt cookie
+}
+
+type StripeConfig struct {
+	PublicKey         string                 `yaml:"publicKey"`
+	SecretKey         string                 `yaml:"secretKey"`
+	PaymentSuccessURL string                 `yaml:"paymentSuccessURL"`
+	PaymentCancelURL  string                 `yaml:"paymentCancelURL"`
+	Products          []models.StripeProduct `yaml:"products"`
+}
+
+// Oauth2Config is set automatically when this program starts up, based on
+// values set elsewhere
+type Oauth2Config struct {
+	AuthCodeURL       string         // will be set later
+	CodeChallenge     string         // will be set later
+	CodeVerif         string         // will be set later
+	OauthConfig       *oauth2.Config // will be set later
+	OauthStr          string         // will be set later
+	RuntimeOauthState string         // will be set later
+}
+
+type App struct {
+	Domain                string                  `yaml:"domain"`
+	FullDomainURL         string                  `yaml:"fullDomainURL"`
+	FusionAuth            FusionAuthConfig        `yaml:"fusionAuth"`
+	JWT                   JWTConfig               `yaml:"jwt"`
+	Stripe                StripeConfig            `yaml:"stripe"`
+	APIKey                string                  `yaml:"apiKey"`
+	Oauth2Config          Oauth2Config            // will be set later
+	StripeProductsFromAPI []models.ProductSummary // will be set later
 }
 
 type Config struct {
-	Domain                      string                       `yaml:"domain"`
-	FullDomainURL               string                       `yaml:"fullDomainURL"`
-	AuthCallbackRedirectURL     string                       `yaml:"authCallbackRedirectURL"`
-	FusionAuthHost              string                       `yaml:"fusionAuthHost"`       // "http://fusionauth:9011"
-	FusionAuthPublicHost        string                       `yaml:"fusionAuthPublicHost"` // "http://localhost:9011"
-	FusionAuthAPIKey            string                       `yaml:"fusionAuthAPIKey"`
-	FusionAuthAppID             string                       `yaml:"fusionAuthAppID"`
-	FusionAuthOauthRedirectURL  string                       `yaml:"fusionAuthOauthRedirectURL"`
-	FusionAuthOauthClientID     string                       `yaml:"fusionAuthOauthClientID"`
-	FusionAuthOauthClientSecret string                       `yaml:"fusionAuthOauthClientSecret"`
-	FusionAuthTenantID          string                       `yaml:"fusionAuthTenantID"`
-	PostgresUser                string                       `yaml:"postgresUser"`
-	PostgresPass                string                       `yaml:"postgresPass"`
-	PostgresHost                string                       `yaml:"postgresHost"`
-	PostgresPort                string                       `yaml:"postgresPort"`
-	PostgresDBName              string                       `yaml:"postgresDbName"`
-	PostgresOptions             string                       `yaml:"postgresOptions"`
-	JWTCookieDomain             string                       `yaml:"jwtCookieDomain"`
-	JWTCookieMaxAgeSeconds      int                          `yaml:"jwtCookieMaxAgeSeconds"`
-	JWTCookieSetSecure          bool                         `yaml:"jwtCookieSetSecure"` // sets the "secure" flag for the jwt cookie
-	JWTCookieName               string                       `yaml:"jwtCookieName"`      // sets the "secure" flag for the jwt cookie
-	StripePublicKey             string                       `yaml:"stripePublicKey"`
-	StripeSecretKey             string                       `yaml:"stripeSecretKey"`
-	StripePaymentSuccessURL     string                       `yaml:"stripePaymentSuccessURL"`
-	StripePaymentCancelURL      string                       `yaml:"stripePaymentCancelURL"`
-	StripeProducts              []StripeProduct              `yaml:"stripeProducts"`
-	MutationKey                 string                       `yaml:"mutationKey"`
-	MutableFields               models.MutableFields         `yaml:"mutableFields"`
-	RuntimeOauthState           string                       // will be set later
-	FusionAuthClient            *fusionauth.FusionAuthClient // will be set later
-	OauthConfig                 *oauth2.Config               // will be set later
-	OauthStr                    string                       // will be set later
-	CodeVerif                   string                       // will be set later
-	CodeChallenge               string                       // will be set later
-	AuthCodeURL                 string                       // will be set later
-	StripeProductsFromAPI       []models.ProductSummary      // will be set later
-}
-
-type CompleteConfig struct {
-	Applications []Config     `yaml:"apps"`
-	Global       GlobalConfig `yaml:"global"`
+	Apps   []App        `yaml:"apps"`
+	Global GlobalConfig `yaml:"global"`
 }
 
 // LoadConfig reads from a provided yaml-formatted configuration filename
-func LoadConfigYaml() (conf CompleteConfig, err error) {
+func LoadConfigYaml() (conf Config, err error) {
 	confFile := "/res/config.yml"
 	envConfFile := os.Getenv("config")
 	if envConfFile != "" {
@@ -93,68 +99,32 @@ func LoadConfigYaml() (conf CompleteConfig, err error) {
 	return conf, nil
 }
 
-// LoadConfig reads from a provided yaml-formatted configuration filename
-// TODO: Figureout why this doesn't support the config structs from above.
-//       For some reason the "apps" section is empty. Could be related to the
-//       un-yaml-annotated sections in the config.
-func LoadConfig() (conf CompleteConfig, err error) {
-	err = viper.BindEnv("config")
-	if err != nil {
-		return conf, fmt.Errorf("failed to bind config env: %v", err.Error())
-	}
-	configName := viper.GetString("config")
-	viper.SetConfigName(configName) // name of config file (without extension)
-	viper.SetConfigType("yaml")     // REQUIRED if the config file does not have the extension in the name
-	viper.AddConfigPath("./res")    // optionally look for config in the working directory
-	viper.AddConfigPath(".")        // optionally look for config in the working directory
-	err = viper.ReadInConfig()      // Find and read the config file
-	if err != nil {                 // Handle errors reading the config file
-		return conf, fmt.Errorf("error config file: %s", err)
-	}
-	err = viper.Unmarshal(&conf)
-	if err != nil {
-		return conf, fmt.Errorf("unable to decode into struct, %v", err)
-	}
-
-	return conf, nil
-}
-
-func (conf *CompleteConfig) GetConfigForDomain(domain string) (Config, bool) {
-	for _, app := range conf.Applications {
+func (conf *Config) GetAppByDomain(domain string) (App, bool) {
+	for _, app := range conf.Apps {
 		if app.Domain == domain {
 			return app, true
 		}
 	}
 
-	return Config{}, false
+	return App{}, false
 }
 
-func (conf *CompleteConfig) GetConfigForOrigin(origin string) (Config, bool) {
-	// trim the trailing slash from the referer
-	// orig := origin
-	// if strings.HasSuffix(origin, "/") {
-	// 	orig = origin[:len(origin)-len("/")]
-	// }
-	// orig, err := url.Parse(origin)
-	// if err != nil {
-	// 	log.Printf("failed to parse origin url: %v", err.Error())
-	// 	return Config{}, false
-	// }
-	for _, app := range conf.Applications {
+func (conf *Config) GetAppByOrigin(origin string) (App, bool) {
+	for _, app := range conf.Apps {
 		if app.Domain == origin {
 			return app, true
 		}
 	}
 
-	return Config{}, false
+	return App{}, false
 }
 
-func (conf *CompleteConfig) GetConfigForAppID(appID string) (Config, bool) {
-	for _, app := range conf.Applications {
-		if app.FusionAuthAppID == appID {
+func (conf *Config) GetConfigForAppID(appID string) (App, bool) {
+	for _, app := range conf.Apps {
+		if app.FusionAuth.AppID == appID {
 			return app, true
 		}
 	}
 
-	return Config{}, false
+	return App{}, false
 }

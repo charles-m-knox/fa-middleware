@@ -13,7 +13,6 @@ This repository contains the building blocks for a FusionAuth-based middleware l
   - [Managing the database](#managing-the-database)
   - [Features](#features)
   - [Schema discussion](#schema-discussion)
-    - [Table definition](#table-definition)
   - [TODO](#todo)
 
 ## Getting started
@@ -89,19 +88,11 @@ Using `adminer`, which is included in the docker compose file, you can navigate 
   * [ ] Logout API endpoint - this is done by just providing a link to the `/logout` URL in fusion auth
   * [ ] Updating a user's FusionAuth info (separate from the user data db) https://fusionauth.io/docs/v1/tech/apis/users/#update-a-user
 * [x] Multi-tenancy - multiple apps should be able to interface via this middleware into a single FusionAuth instance
-  * [x] Allow for any API to write data to the user storage database, to allow for custom API's to hook into this middleware service - this is accomplished using the secret `mutationKey` in the `config.yml`
-  * [ ] Allow for a `mutationKey` to be combined with a specific domain for extra security
 * [x] Stripe integration - complements multi-tenancy by enabling payments to be tracked across different projects
-  * [x] Allow for subscriber-only fields to be locked when users don't have a subscription
-  * [x] Field locking based on subscription state, with regular expression matching
-  * [x] Caching of subscription state so we don't overload Stripe API's, currently hardcoded to 30 seconds
+  * [x] Caching of subscription state so we don't overload Stripe API's, currently hardcoded to 60 seconds
   * [x] Allow for one-time payments to be queued for checkout (such as donations) in addition to subscriptions - this is done by setting multiple `stripeProducts` in the `config.yml`
-  * [x] Persist Stripe customer ID's to the user storage database
-  * [ ] Persist Stripe customer ID's to the FusionAuth user storage database
+  * [x] Persist Stripe customer ID's to the FusionAuth "user data" for each user
   * [x] Propagate users to Stripe as customers on login
-* [x] Revision history to allow any field to be "rewound"
-  * [ ] Each time the user saves a change on the frontend, we capture up to `X` (configurable) revisions in the database - could implement this by truncating in a separate thread every time a field is mutated
-* [x] Basic HTML templating to help bootstrap testing
 
 ## Schema discussion
 
@@ -122,19 +113,6 @@ These associations can be stored in a few locations:
 
 It might be smartest to store the data in all three of these for the sake of ensuring that the data is always viewable on each platform - Stripe, FusionAuth, and queryable locally without having to hammer away at a 3rd party API (FusionAuth won't be third party since it's local, but the API itself is subject to third party design). However, it is worth pointing out that the most important and reliable place to store these unique identifiers is within Stripe as metadata tags.
 
-### Table definition
-
-This is an initial draft of a possible database schema:
-
-| `id`                                   | `app_id`                               | `tenant_id`                            | `field`    | `value` | `updated_at` |
-| -------------------------------------- | -------------------------------------- | -------------------------------------- | ---------- | ------- | ------------ |
-| `370df073-c2e3-41f9-a64f-32866a48b972` | `6e4b577c-6752-46db-9c42-3bd86858c59d` | `cbb8cd3a-aed7-413c-a65f-40acf4034fc3` | `settings` | `"{}"`  | `<date>`     |
-
 ## TODO
 
 * document the api endpoints properly
-* add a goroutine call to truncate field/value revision history in the db > 100 for rows matching:
-  * user id
-  * tenant id
-  * app id
-  * field name

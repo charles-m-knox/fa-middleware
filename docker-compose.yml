@@ -15,29 +15,27 @@ services:
       - BIND_PORT_EXTERNAL=${BIND_PORT_EXTERNAL}
     volumes:
       - ./res/config.yml:/res/config.yml:ro
-      - ./templates:/templates
-      - ./assets:/assets
     restart: unless-stopped
     logging:
       driver: "json-file"
       options:
         max-size: "200k"
         max-file: "10"
-  fa-pgsqldb:
-    image: postgres:alpine
-    environment:
-      - PGDATA=/var/lib/postgresql/data/pgdata
-      - POSTGRES_USER=${MIDDLEWARE_POSTGRES_USER}
-      - POSTGRES_PASSWORD=${MIDDLEWARE_POSTGRES_PASSWORD}
-    ports:
-      - "127.0.0.1:5432:5432"
-    restart: unless-stopped
-    volumes:
-      - ./data/fa-pgsqldb:/var/lib/postgresql/data
-  adminer:
-    image: adminer
-    restart: always
-    environment:
-      - ADMINER_DEFAULT_SERVER=fa-pgsqldb
-    ports:
-      - "127.0.0.1:9015:8080"
+  # fa-pgsqldb:
+  #   image: postgres:alpine
+  #   environment:
+  #     - PGDATA=/var/lib/postgresql/data/pgdata
+  #     - POSTGRES_USER=${MIDDLEWARE_POSTGRES_USER}
+  #     - POSTGRES_PASSWORD=${MIDDLEWARE_POSTGRES_PASSWORD}
+  #   ports:
+  #     - "127.0.0.1:5432:5432"
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./data/fa-pgsqldb:/var/lib/postgresql/data
+  # adminer:
+  #   image: adminer
+  #   restart: always
+  #   environment:
+  #     - ADMINER_DEFAULT_SERVER=fa-pgsqldb
+  #   ports:
+  #     - "127.0.0.1:9015:8080"

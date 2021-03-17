@@ -6,22 +6,23 @@ type OauthState struct {
 	Verifier string
 }
 
-type PostMutationBody struct {
-	Domain string `json:"d"`
-	JWT    string `json:"s"`
-	Field  string `json:"f"`
-	Value  string `json:"v"`
-	Method string `json:"m"`
-	Key    string `json:"k"`
+type SubscriptionStatusCheckBody struct {
+	UserID    string `json:"userId"`
+	JWT       string `json:"jwt"`
+	APIKey    string `json:"key"`
+	ProductID string `json:"productId"`
 }
 
-type UserData struct {
-	UserID    string
-	AppID     string
-	TenantID  string
-	Field     string
-	Value     string
-	UpdatedAt int64
+type LoggedInResponse struct {
+	LoggedIn     bool   `json:"loggedIn"`
+	UserID       string `json:"userId"`
+	UserEmail    string `json:"userEmail"`
+	UserFullName string `json:"userFullName"`
+}
+
+type StripeProduct struct {
+	ProductID string   `yaml:"productId"`
+	PriceIDs  []string `yaml:"priceIds"`
 }
 
 type ProductPrice struct {
@@ -45,20 +46,6 @@ type ProductSummary struct {
 	Prices      []ProductPrice
 }
 
-type SubscriberField struct {
-	Field       string `yaml:"field"`
-	FieldRegExp string `yaml:"fieldRegExp"`
-	ProductID   string `yaml:"productId"`
-}
-
-type MutableField struct {
-	Field       string `yaml:"field"`
-	FieldRegExp string `yaml:"fieldRegExp"`
-	ProductID   string `yaml:"productId"`
-}
-
-type MutableFields struct {
-	System         []MutableField    `yaml:"system"`
-	User           []MutableField    `yaml:"user"`
-	SubscriberOnly []SubscriberField `yaml:"subscriberOnly"`
+type CreateCheckoutSessionResponse struct {
+	SessionID string `json:"id"`
 }

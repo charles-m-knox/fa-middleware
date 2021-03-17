@@ -10,16 +10,16 @@ import (
 	"github.com/FusionAuth/go-client/pkg/fusionauth"
 )
 
-func GetOauthRedirectURL(conf config.Config) string {
+func GetOauthRedirectURL(conf config.App) string {
 	return fmt.Sprintf(
 		"%v/%v",
-		conf.FusionAuthOauthRedirectURL,
-		conf.FusionAuthAppID,
+		conf.FusionAuth.OauthRedirectURL,
+		conf.FusionAuth.AppID,
 	)
 }
 
 // Login logs in the user using the FusionAuth Go client library
-func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState models.OauthState) (user fusionauth.User, jwt string, err error) {
+func Login(conf config.App, fa *fusionauth.FusionAuthClient, oauthState models.OauthState) (user fusionauth.User, jwt string, err error) {
 	// TODO: Use https://fusionauth.io/docs/v1/tech/apis/jwt/#retrieve-refresh-tokens
 	// TODO: to try and retrieve a refresh token and compare it to an HttpOnly
 	// TODO: cookie that contains a refresh token from the gin context
@@ -28,8 +28,8 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 
 	token, oauthError, err := fa.ExchangeOAuthCodeForAccessTokenUsingPKCE(
 		oauthState.Code,
-		conf.FusionAuthOauthClientID,
-		conf.FusionAuthOauthClientSecret,
+		conf.FusionAuth.OauthClientID,
+		conf.FusionAuth.OauthClientSecret,
 		GetOauthRedirectURL(conf),
 		oauthState.Verifier,
 	)
@@ -63,8 +63,8 @@ func Login(conf config.Config, fa *fusionauth.FusionAuthClient, oauthState model
 	return user, token.AccessToken, nil
 }
 
-func GetUserByJWT(conf config.Config, jwt string) (user fusionauth.User, err error) {
-	userResp, errs, err := conf.FusionAuthClient.RetrieveUserUsingJWT(jwt)
+func GetUserByJWT(conf config.App, jwt string) (user fusionauth.User, err error) {
+	userResp, errs, err := conf.FusionAuth.Client.RetrieveUserUsingJWT(jwt)
 	// userResp, errs, err := fa.RetrieveUserInfoFromAccessToken(token.AccessToken)
 	if err != nil {
 		return user, fmt.Errorf(
@@ -88,4 +88,30 @@ func GetUserByJWT(conf config.Config, jwt string) (user fusionauth.User, err err
 	}
 
 	return userResp.User, nil
+}
+
+func SetUserData(conf config.App, user fusionauth.User, key string, value interface{}) error {
+	if user.Data == nil {
+		user.Data = make(map[string]interface{})
+	}
+
+	user.Data[key] = value
+
+	_, errs, err := conf.FusionAuth.Client.UpdateUser(
+		user.Id,
+		fusionauth.UserRequest{
+			User: user,
+		},
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to update user: %v", err.Error())
+	}
+	if errs != nil {
+		return fmt.Errorf(
+			"failed to update user due to errors: %v",
+			errs.Error(),
+		)
+	}
+	return nil
 }
